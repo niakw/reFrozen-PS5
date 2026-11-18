@@ -11,4 +11,10 @@ namespace refrozen::ps5 {
     std::uint64_t base, std::uint64_t size,
     std::uint64_t alignment = kPs5KernelGranule);
 
+// PE SizeOfImage may be 4 KiB-aligned. This helper rounds the logical image
+// size to the native PS5 granule before reserving the exact guest base.
+[[nodiscard]] ExactReserveResult ReserveExactGuestImagePs5(
+    std::uint64_t base, std::uint64_t logical_size,
+    std::uint64_t alignment = kPs5KernelGranule);
+
 }  // namespace refrozen::ps5
