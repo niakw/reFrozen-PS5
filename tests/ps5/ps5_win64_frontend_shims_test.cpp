@@ -15,6 +15,7 @@ int user_init_calls;
 int user_term_calls;
 int pad_open_calls;
 int pad_close_calls;
+int graphics_init_calls;
 }
 
 extern "C" {
@@ -37,8 +38,10 @@ int gamepad_connected(int user);
 int gamepad_rumble(int user, std::uint16_t left, std::uint16_t right);
 void gamepad_battery(int user, std::uint8_t* type, std::uint8_t* level);
 extern std::uint64_t rt_last_surface_hwnd;
+int rt_ps5_frontend_init(void);
 
 void rt_log(const char*, ...) {}
+int rt_ps5_graphics_init(void) { ++graphics_init_calls; return 0; }
 
 std::int32_t sceUserServiceInitialize(void*) {
   ++user_init_calls;
@@ -78,6 +81,10 @@ void di_mouse_button(int, int) {}
 }
 
 int main() {
+  assert(rt_ps5_frontend_init() == 0);
+  assert(graphics_init_calls == 1);
+  assert(user_init_calls == 1 && pad_open_calls == 1);
+
   assert(cocoa_active() == 0);
   void* window = cocoa_window_new(
       0x1234, 10, 20, 1280, 720, 0, 0, 0, "Warcraft");
