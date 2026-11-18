@@ -102,9 +102,15 @@ jobs:
             build/nightsight/runtime build/runtime-first-launch
           grep -q 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=22 aggregate=1 excluded=steam.c,vulkan.c' \
             build/runtime-first-launch/receipt.txt
+            build/runtime-first-launch/undefined-symbols.txt
+            build/runtime-first-launch/symbols.txt
           test "$(wc -l < build/runtime-first-launch/objects.list | tr -d ' ')" -eq 22
           test -s build/runtime-first-launch/first-launch-runtime.o
           file build/runtime-first-launch/first-launch-runtime.o
+          nm -u build/runtime-first-launch/first-launch-runtime.o | sort -u > build/runtime-first-launch/undefined-symbols.txt
+          nm build/runtime-first-launch/first-launch-runtime.o > build/runtime-first-launch/symbols.txt
+          echo "== unresolved aggregate symbols =="
+          cat build/runtime-first-launch/undefined-symbols.txt
       - name: Upload compiler evidence
         uses: actions/upload-artifact@v4
         with:
