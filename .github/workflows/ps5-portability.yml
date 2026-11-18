@@ -23,7 +23,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run static scanner tests
-        run: python -m unittest discover -s tests -p 'test_ps5_*.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_ps5_*.py' -v
+          bash -n scripts/ps5/private-install-runtime-audit.sh
       - name: Generate portability report
         run: python scripts/ps5_portability_inventory.py --output build/ps5-portability.json
       - name: Upload report
