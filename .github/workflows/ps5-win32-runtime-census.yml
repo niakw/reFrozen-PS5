@@ -1,0 +1,50 @@
+name: PS5 Win32 x86recomp runtime source census
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/x86recomp_runtime_portability.py'
+      - 'tests/test_ps5_x86recomp_runtime_portability.py'
+      - 'patches/x86recomp/**'
+      - '.github/workflows/ps5-win32-runtime-census.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  census:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit-test census
+        run: python -m unittest tests.test_ps5_x86recomp_runtime_portability -v
+      - name: Clone pinned x86recomp and apply all reFrozen patches
+        run: |
+          set -euxo pipefail
+          git clone --filter=blob:none https://github.com/JTM-rootstorm/x86recomp.git build/x86recomp
+          cd build/x86recomp
+          git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
+          for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do
+            git apply "$patch"
+          done
+          test -d src/runtime
+      - name: Generate patched Win32 runtime portability census
+        run: |
+          python scripts/ps5/x86recomp_runtime_portability.py build/x86recomp/src/runtime --output build/win32-runtime-census.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path("build/win32-runtime-census.json").read_text())
+          print("sources:",r["source_files"])
+          print("apple blockers:",r["apple_blocker_count"])
+          print("non-Apple candidates:",r["non_apple_candidate_count"])
+          print("blocker files:",", ".join(r["apple_blocker_files"]))
+          PY
+      - name: Upload source-only census evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-source-census
+          path: build/win32-runtime-census.json
+          if-no-files-found: error
+          retention-days: 3
