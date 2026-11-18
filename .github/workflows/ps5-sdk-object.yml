@@ -45,6 +45,9 @@ jobs:
           PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
         run: |
           bash scripts/ps5/compile-guest32-object.sh
+          test -s build/ps5-sdk-smoke/compile_commands.json
+          grep -q -- '--target=x86_64-sie-ps5' \
+            build/ps5-sdk-smoke/compile_commands.json
           grep -q 'Machine: EM_X86_64' \
             build/ps5-sdk-smoke/guest64_ranges-object-header.txt
           grep -q 'Machine: EM_X86_64' \
@@ -58,5 +61,6 @@ jobs:
           path: |
             build/ps5-sdk-smoke/*object-header.txt
             build/ps5-sdk-smoke/CMakeCache.txt
+            build/ps5-sdk-smoke/compile_commands.json
           if-no-files-found: ignore
           retention-days: 7
