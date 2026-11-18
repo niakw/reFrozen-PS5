@@ -24,6 +24,25 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_between_once(
+    path: Path, start: str, end: str, replacement: str
+) -> None:
+    text = path.read_text(encoding="utf-8")
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise PatchError(
+            f"{path.name}: expected unique block markers "
+            f"{start!r} / {end!r}"
+        )
+    begin = text.index(start)
+    finish = text.index(end, begin)
+    if finish <= begin:
+        raise PatchError(f"{path.name}: invalid block marker order")
+    path.write_text(
+        text[:begin] + replacement + text[finish:],
+        encoding="utf-8",
+    )
+
+
 def patch_runtime(runtime: Path) -> None:
     runtime = runtime.resolve()
     if not runtime.is_dir():
@@ -35,7 +54,8 @@ def patch_runtime(runtime: Path) -> None:
     files = runtime / "files.c"
     handles = runtime / "handles.c"
     pdh = runtime / "pdh.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh)):
+    fiber = runtime / "fiber.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -502,6 +522,53 @@ void I_pdh_dll_PdhCollectQueryData(CPU *c) {
     )
 
 
+    replace_once(
+        fiber,
+        """// Win32 fibers on arm64. A fiber owns a native stack (for the nested C frames of translated code)
+""",
+        """// Win32 fibers on x86-64 PS5. A fiber owns a native stack (for the nested C frames of translated code)
+""",
+    )
+    replace_between_once(
+        fiber,
+        "__attribute__((naked)) static void swap_ctx",
+        "static __thread Fiber *cur_fiber;",
+        r"""__attribute__((naked)) static void swap_ctx(uint64_t *save_sp, uint64_t new_sp) {
+    __asm__ volatile(
+        "pushq %rbx\n"
+        "pushq %rbp\n"
+        "pushq %r12\n"
+        "pushq %r13\n"
+        "pushq %r14\n"
+        "pushq %r15\n"
+        "movq %rsp, (%rdi)\n"
+        "movq %rsi, %rsp\n"
+        "popq %r15\n"
+        "popq %r14\n"
+        "popq %r13\n"
+        "popq %r12\n"
+        "popq %rbp\n"
+        "popq %rbx\n"
+        "retq\n");
+}
+
+""",
+    )
+    replace_between_once(
+        fiber,
+        '    // initial native frame: swap_ctx "returns" into fiber_entry\n',
+        "    f->host_sp = sp;\n",
+        """    // Initial SysV x86-64 frame for swap_ctx:
+    // r15,r14,r13,r12,rbp,rbx,return-address. After six pops + ret,
+    // fiber_entry starts with the ABI-required rsp % 16 == 8.
+    uint64_t top = G(f->host_stack) + f->host_size;
+    uint64_t sp = (top - 56) & ~0xFull;
+    memset(PTR(sp), 0, 56);
+    wr64(sp + 48, G(fiber_entry));
+""",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
@@ -510,7 +577,7 @@ def main() -> int:
         patch_runtime(args.runtime)
     except (OSError, PatchError) as exc:
         parser.error(str(exc))
-    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c pdh.c")
+    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c pdh.c fiber.c")
     return 0
 
 
