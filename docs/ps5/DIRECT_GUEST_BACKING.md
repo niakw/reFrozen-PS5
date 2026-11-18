@@ -19,7 +19,7 @@ The rounded tail is backing only. It is not part of the guest PE image.
 
 The current design is deliberately two-phase:
 
-1. `ReserveExactGuestRangePs5` proves that the requested guest VA can be reserved exactly.
+1. `ReserveExactGuestImagePs5` rounds the logical PE image size to the PS5 granule and proves that the requested guest VA can be reserved exactly.
 2. `MapDirectGuestBackingPs5` allocates direct memory type 12 and maps it over that reservation with:
    - `PROT_READ | PROT_WRITE`
    - `MAP_FIXED`
