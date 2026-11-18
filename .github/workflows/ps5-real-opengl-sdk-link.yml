@@ -73,12 +73,49 @@ jobs:
           unzip -q build/sdk-download/sdk.zip -d build/sdk-root
           test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang
 
+      - name: Create path-mapped Payload SDK compiler facade
+        run: |
+          ORIG="$GITHUB_WORKSPACE/build/sdk-root/ps5-payload-sdk"
+          WRAP="$GITHUB_WORKSPACE/build/sdk-pathmap"
+          rm -rf "$WRAP"
+          mkdir -p "$WRAP/bin"
+          for entry in "$ORIG"/*; do
+            name=$(basename "$entry")
+            case "$name" in
+              bin|toolchain) ;;
+              *) ln -s "$entry" "$WRAP/$name" ;;
+            esac
+          done
+          cp -a "$ORIG/toolchain" "$WRAP/toolchain"
+          for tool in "$ORIG"/bin/*; do
+            name=$(basename "$tool")
+            case "$name" in
+              prospero-clang|prospero-clang++) ;;
+              *) ln -s "$tool" "$WRAP/bin/$name" ;;
+            esac
+          done
+          cat > "$WRAP/bin/prospero-clang" <<EOF
+          #!/usr/bin/env bash
+          exec "$ORIG/bin/prospero-clang" \
+            "-ffile-prefix-map=$GITHUB_WORKSPACE/=workspace/" \
+            "-fmacro-prefix-map=$GITHUB_WORKSPACE/=workspace/" "\$@"
+          EOF
+          cat > "$WRAP/bin/prospero-clang++" <<EOF
+          #!/usr/bin/env bash
+          exec "$ORIG/bin/prospero-clang++" \
+            "-ffile-prefix-map=$GITHUB_WORKSPACE/=workspace/" \
+            "-fmacro-prefix-map=$GITHUB_WORKSPACE/=workspace/" "\$@"
+          EOF
+          chmod +x "$WRAP/bin/prospero-clang" "$WRAP/bin/prospero-clang++"
+          "$WRAP/bin/prospero-clang" --version
+          "$WRAP/bin/prospero-clang++" --version
+
       - name: Restore exact installed OpenGL SDK cache
         id: opengl-cache
         uses: actions/cache@v4
         with:
           path: build/ps5-opengl-sdk
-          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1
+          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1-pathmap-v1
 
       - name: Fetch exact PS5 OpenGL transitive sources
         if: steps.opengl-cache.outputs.cache-hit != 'true'
@@ -88,7 +125,7 @@ jobs:
       - name: Build and install audited PS5 OpenGL 4.6 SDK
         working-directory: build/opengl-source
         env:
-          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-pathmap
           PS5_OPENGL_SDK_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
           MAKEFLAGS: -j2
         run: |
@@ -108,7 +145,7 @@ jobs:
 
       - name: Link reFrozen WGL backend against the installed PS5 OpenGL SDK
         env:
-          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-pathmap
           PS5_OPENGL_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
         run: bash scripts/ps5/build-wgl-real-opengl-sdk.sh
 
