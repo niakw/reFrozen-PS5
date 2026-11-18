@@ -1,0 +1,69 @@
+name: PS5 Win32 x86recomp blocker compile probe
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/x86recomp_runtime_portability.py'
+      - 'patches/x86recomp/**'
+      - '.github/workflows/ps5-win32-runtime-compile-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  compile-three-host-blockers:
+    runs-on: ubuntu-24.04
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl unzip clang-18 llvm-18 lld-18
+      - name: Download pinned PS5 Payload SDK
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+      - name: Materialize patched x86recomp source
+        run: |
+          git clone --filter=blob:none https://github.com/JTM-rootstorm/x86recomp.git build/x86recomp
+          cd build/x86recomp
+          git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
+          for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do git apply "$patch"; done
+          cd "$GITHUB_WORKSPACE"
+          python3 -B scripts/ps5/patch_x86recomp_runtime_ps5.py build/x86recomp
+      - name: Compile the three source-level Apple blockers for PS5
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set +e
+          mkdir -p build/win32-ps5-probe/logs build/win32-ps5-probe/objects
+          CC="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          printf 'file\tstatus\n' > build/win32-ps5-probe/results.tsv
+          for file in platform.cpp process.cpp stall.cpp; do
+            "$CC" -std=c++20 -O0 -g0 -Ibuild/x86recomp/src               -c "build/x86recomp/src/runtime/$file"               -o "build/win32-ps5-probe/objects/${file%.cpp}.o"               > "build/win32-ps5-probe/logs/$file.log" 2>&1
+            rc=$?
+            if [ "$rc" -eq 0 ]; then
+              printf '%s\tPASS\n' "$file" >> build/win32-ps5-probe/results.tsv
+            else
+              printf '%s\tFAIL\n' "$file" >> build/win32-ps5-probe/results.tsv
+            fi
+          done
+          cat build/win32-ps5-probe/results.tsv
+          for file in platform.cpp process.cpp stall.cpp; do
+            echo "===== $file ====="
+            sed -n '1,80p' "build/win32-ps5-probe/logs/$file.log"
+          done
+          exit 0
+      - name: Preserve compiler diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-blocker-compile-probe
+          path: |
+            build/win32-ps5-probe/results.tsv
+            build/win32-ps5-probe/logs/*.log
+          if-no-files-found: error
+          retention-days: 3

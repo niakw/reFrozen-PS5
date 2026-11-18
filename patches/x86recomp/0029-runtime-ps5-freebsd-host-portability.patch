@@ -1,0 +1,46 @@
+diff --git a/src/runtime/platform.cpp b/src/runtime/platform.cpp
+index 455d45a..0000000 100644
+--- a/src/runtime/platform.cpp
++++ b/src/runtime/platform.cpp
+@@ -20,7 +20,7 @@
+ #include <mach/mach_time.h>
+ #include <mach/thread_policy.h>
+ #include <pthread.h>
+-#else
++#elif defined(__linux__)
+ #include <sys/prctl.h>
+ #endif
+ 
+@@ -113,12 +113,14 @@ uint64_t MonotonicNs() {
+ }
+ 
+ void SleepUntilNs(uint64_t t) {
++#if defined(__linux__)
+   // The default slack (50 us) would delay every wake-up by about that.
+   static thread_local bool slack_set = false;
+   if (!slack_set) {
+     prctl(PR_SET_TIMERSLACK, 1UL, 0UL, 0UL, 0UL);
+     slack_set = true;
+   }
++#endif
+   timespec ts;
+   ts.tv_sec = time_t(t / 1000000000u);
+   ts.tv_nsec = long(t % 1000000000u);
+diff --git a/src/runtime/process.cpp b/src/runtime/process.cpp
+index 2e80e92..0000000 100644
+--- a/src/runtime/process.cpp
++++ b/src/runtime/process.cpp
+@@ -290,8 +290,12 @@ void GuestMainTrampoline() {
+ }  // namespace
+ 
+ static uint32_t RunOnMainThread(Thread* t, uint32_t entry) {
++  int mmap_flags = MAP_PRIVATE | MAP_ANONYMOUS;
++#ifdef MAP_NORESERVE
++  mmap_flags |= MAP_NORESERVE;
++#endif
+   void* stack = mmap(nullptr, kHostStack, PROT_READ | PROT_WRITE,
+-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
++                     mmap_flags, -1, 0);
+   if (stack == MAP_FAILED) FatalF("cannot allocate the main guest stack");
+   g_main_thread = t;
+   g_main_entry = entry;
