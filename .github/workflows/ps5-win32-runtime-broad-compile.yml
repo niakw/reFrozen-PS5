@@ -6,6 +6,8 @@ on:
       - 'docs/ps5/WIN32_RUNTIME_PS5_CENSUS.md'
       - 'docs/ps5/WIN32_SDL_ROUTE.md'
       - 'scripts/ps5/map_win32_runtime_imports.py'
+      - 'scripts/ps5/patch_x86recomp_runtime_ps5.py'
+      - 'tests/test_ps5_x86recomp_timing_patch.py'
       - 'tests/test_ps5_win32_import_map.py'
       - '.github/workflows/ps5-win32-runtime-broad-compile.yml'
   workflow_dispatch:
@@ -181,11 +183,16 @@ jobs:
                   users[row["category"]].add(row["file"])
           for category, files in sorted(users.items()):
               print(category, len(files), ", ".join(sorted(files)))
-          if d["unique_sdl_symbols"] != 61:
+          forbidden={"SDL_GetTicks","SDL_GetTicksNS"}
+          found=forbidden.intersection(d["sdl_symbols"])
+          if found:
+              raise SystemExit(f"SDL timing symbols still unresolved: {sorted(found)}")
+          if d["unique_sdl_symbols"] != 59:
               raise SystemExit(
-                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 61"
+                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 59"
               )
-          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=61")
+          print("REFROZEN_PS5_SDL_TIMING_REMOVED pass=1 symbols=SDL_GetTicks,SDL_GetTicksNS")
+          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=59")
           PY
       - name: Record patched public SDL call sites for adapter design
         run: |

@@ -20,10 +20,48 @@ def replace_exact(path: Path, old: str, new: str, expected: int = 1) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8")
 
 
+
+def patch_monotonic_timing(rt: Path) -> None:
+    """Remove SDL timing-only dependencies from the PS5 Win32 runtime."""
+    targets = (
+        ("hle/ddraw.cpp", 2, 0),
+        ("hle/present.cpp", 0, 2),
+        ("hle/user32_window.cpp", 6, 0),
+    )
+    for relative, ticks_ms, ticks_ns in targets:
+        path = rt / relative
+        text = path.read_text(encoding="utf-8")
+        marker = '#include "runtime/platform.h"\n'
+        if marker not in text:
+            anchor = '#include "runtime/log.h"\n'
+            if text.count(anchor) != 1:
+                raise SystemExit(
+                    f"{path}: expected one runtime/log.h include, found {text.count(anchor)}"
+                )
+            text = text.replace(anchor, anchor + marker)
+        if text.count("SDL_GetTicks()") != ticks_ms:
+            raise SystemExit(
+                f"{path}: expected {ticks_ms} SDL_GetTicks() call(s), "
+                f"found {text.count('SDL_GetTicks()')}"
+            )
+        if text.count("SDL_GetTicksNS()") != ticks_ns:
+            raise SystemExit(
+                f"{path}: expected {ticks_ns} SDL_GetTicksNS() call(s), "
+                f"found {text.count('SDL_GetTicksNS()')}"
+            )
+        text = text.replace(
+            "SDL_GetTicks()", "(platform::MonotonicNs() / 1000000ULL)"
+        )
+        text = text.replace("SDL_GetTicksNS()", "platform::MonotonicNs()")
+        path.write_text(text, encoding="utf-8")
+
+
 def apply(root: Path) -> None:
     rt = root / "src" / "runtime"
     if not rt.is_dir():
         raise SystemExit(f"runtime directory not found: {rt}")
+
+    patch_monotonic_timing(rt)
 
     guest = rt / "guest_memory.cpp"
     replace_exact(
