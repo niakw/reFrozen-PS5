@@ -27,6 +27,7 @@ mkdir -p "$OUTDIR"
   "$ROOT/ps5/runtime/exact_reservation_ps5.cpp" \
   "$ROOT/ps5/runtime/direct_guest_backing_ps5.cpp" \
   "$ROOT/ps5/runtime/guest_image_mapping_ps5.cpp" \
+  "$ROOT/ps5/runtime/win64_memory_bridge_ps5.cpp" \
   "$ROOT/ps5/runtime/guest_memory_probe_ps5.cpp" \
   -o "$OUT"
 
