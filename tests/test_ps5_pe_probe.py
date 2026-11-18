@@ -58,7 +58,11 @@ class PEProbeTest(unittest.TestCase):
         ])
         self.assertEqual(
             [item["backend"] for item in d3d11["static_backends"]],
-            ["direct3d11", "direct3d12"],
+            ["direct3d11"],
+        )
+        self.assertEqual(
+            d3d11["static_backends"][0]["dlls"],
+            ["d3d11.dll", "dxgi.dll"],
         )
         self.assertEqual(
             d3d11["ps5_initial_route"],
