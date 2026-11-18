@@ -27,7 +27,7 @@ typedef void *GLsync;
 typedef void (APIENTRYP GLDEBUGPROC)(GLenum, GLenum, GLuint, GLenum, GLsizei,
                                      const char *, const void *);
 
-GLAPI void APIENTRY glClear(GLbitfield mask);
+GLAPI void GLAPIENTRY glBegin(GLenum mode);\nGLAPI void APIENTRY glClear(GLbitfield mask);
 GLAPI void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
 GLAPI void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h);
 GLAPI void APIENTRY glDepthRange(GLdouble nearValue, GLdouble farValue);
@@ -56,11 +56,12 @@ class GlThunkGeneratorTest(unittest.TestCase):
         generated = generate(
             self._prototypes(),
             [
-                "glClear", "glClearColor", "glDepthRange", "glBufferData",
+                "glBegin", "glClear", "glClearColor", "glDepthRange", "glBufferData",
                 "glGetString", "glMapBuffer", "glGetError",
                 "glGetTextureHandleARB", "glFenceSync", "glMany",
             ],
         )
+        self.assertIn("glBegin((GLenum)A0);", generated)
         self.assertIn("glClear((GLbitfield)A0);", generated)
         self.assertIn("glClearColor(AF(0), AF(1), AF(2), AF(3));", generated)
         self.assertIn("glDepthRange(AD(0), AD(1));", generated)
