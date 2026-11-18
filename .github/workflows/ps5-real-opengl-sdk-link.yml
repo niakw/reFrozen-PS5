@@ -24,6 +24,9 @@ jobs:
       OPENGL_ORIGIN_SHA: ad2807d41cef2681882a9ee0d20808779f74b7cd
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Checkout pinned Encore vendor OpenGL snapshot
         uses: actions/checkout@v4
@@ -53,10 +56,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake ninja-build meson pkg-config bison flex \
+            build-essential git cmake ninja-build pkg-config bison flex \
             clang-18 lld-18 llvm-18 ccache curl xz-utils ca-certificates \
             python3-mako python3-yaml python3-packaging \
             glslang-tools spirv-tools libegl1-mesa-dev libgl1-mesa-dev
+          python -m pip install --disable-pip-version-check 'meson==1.10.1'
+          meson --version | grep -qx '1.10.1'
 
       - name: Download and verify Payload SDK v0.42
         run: |
