@@ -246,7 +246,6 @@ class Ps5GlDevice final : public Device {
     if (w <= 0 || h <= 0) FatalF("ps5-gl device: invalid swap size %dx%d", w, h);
     bb_w_ = w;
     bb_h_ = h;
-    vsync_ = vsync;
     (void)Egl().registry.SetSwapInterval(vsync ? 1 : 0);
     if (!back_fbo_) glGenFramebuffers(1, &back_fbo_);
     if (back_color_) glDeleteTextures(1, &back_color_);
@@ -641,7 +640,10 @@ class Ps5GlDevice final : public Device {
 
   void ApplyMatrices() {
     glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(world_.data());
+    // D3D row-vector WORLD*VIEW corresponds to VIEW*WORLD in the
+    // column-vector convention used by compatibility OpenGL.
+    glLoadMatrixf(view_.data());
+    glMultMatrixf(world_.data());
 
     std::array<float, 16> p = projection_;
     const float vw = float(std::max<uint32_t>(viewport_.width, 1));
@@ -943,8 +945,6 @@ class Ps5GlDevice final : public Device {
   int out_h_{};
   int bb_w_{};
   int bb_h_{};
-  bool vsync_{};
-
   GLuint back_fbo_{};
   GLuint back_color_{};
   DepthId current_depth_{};
