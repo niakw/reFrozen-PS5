@@ -1,0 +1,32 @@
+name: Win64 guest WGL shim compile
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/wgl_platform_contract.*'
+      - 'ps5/graphics/wgl_guest_runtime_ps5.*'
+      - '.github/workflows/ps5-wgl-guest-compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Win64 runtime headers
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Compile WGL contract and Win64 guest shims
+        run: |
+          mkdir -p build/wgl-guest
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -Wpedantic -Wconversion             -Ips5/graphics -Ibuild/nightsight/runtime             -c ps5/graphics/wgl_platform_contract.cpp             -o build/wgl-guest/wgl_platform_contract.o
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -Wpedantic -Wconversion             -Ips5/graphics -Ibuild/nightsight/runtime             -c ps5/graphics/wgl_guest_runtime_ps5.cpp             -o build/wgl-guest/wgl_guest_runtime_ps5.o
+          test -s build/wgl-guest/wgl_platform_contract.o
+          test -s build/wgl-guest/wgl_guest_runtime_ps5.o
