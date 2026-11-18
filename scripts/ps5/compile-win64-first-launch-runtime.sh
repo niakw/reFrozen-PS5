@@ -9,8 +9,9 @@ RUNTIME=${1:?usage: compile-win64-first-launch-runtime.sh RUNTIME_ROOT OUT_DIR}
 OUT=${2:?usage: compile-win64-first-launch-runtime.sh RUNTIME_ROOT OUT_DIR}
 SDK=${PS5_PAYLOAD_SDK:?PS5_PAYLOAD_SDK is required}
 CC="$SDK/bin/prospero-clang"
+CXX="$SDK/bin/prospero-clang++"
 JOBS="${BUILD_JOBS:-2}"
-[[ -x "$CC" && -d "$RUNTIME" ]]
+[[ -x "$CC" && -x "$CXX" && -d "$RUNTIME" ]]
 if ! [[ "$JOBS" =~ ^[1-9][0-9]*$ ]]; then
   echo "BUILD_JOBS must be a positive integer" >&2
   exit 2
@@ -90,9 +91,28 @@ done
   -o "$OUT/objects/ps5_audio_out_bridge.o"
 printf '%s\n' "$OUT/objects/ps5_audio_out_bridge.o" >> "$OUT/objects.list"
 
+# Native PS5 window/input frontend replacing Cocoa/GameController.
+for src in ps5_dinput_pad_bridge.cpp ps5_win64_frontend_shims.cpp; do
+  "$CXX" -std=c++20 -O2 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+    -I"$ROOT/ps5/runtime" \
+    -c "$ROOT/ps5/runtime/$src" \
+    -o "$OUT/objects/${src%.cpp}.o"
+  printf '%s\n' "$OUT/objects/${src%.cpp}.o" >> "$OUT/objects.list"
+done
+
+# Native PS5 exact-address Win64 guest-memory implementation.
+for src in exact_reservation_ps5.cpp direct_guest_backing_ps5.cpp \
+           guest_image_mapping_ps5.cpp win64_memory_bridge_ps5.cpp; do
+  "$CXX" -std=c++20 -O2 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+    -I"$ROOT/ps5/host" -I"$ROOT/ps5/runtime" \
+    -c "$ROOT/ps5/runtime/$src" \
+    -o "$OUT/objects/${src%.cpp}.o"
+  printf '%s\n' "$OUT/objects/${src%.cpp}.o" >> "$OUT/objects.list"
+done
+
 count=$(wc -l < "$OUT/objects.list" | tr -d ' ')
-if [[ "$count" -ne 22 ]]; then
-  echo "unexpected first-launch object count: $count (expected 22)" >&2
+if [[ "$count" -ne 28 ]]; then
+  echo "unexpected first-launch object count: $count (expected 28)" >&2
   exit 1
 fi
 
@@ -107,6 +127,6 @@ fi
 "$LLD" -r "${OBJECTS[@]}" -o "$OUT/first-launch-runtime.o"
 test -s "$OUT/first-launch-runtime.o"
 
-printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
+printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s frontend=2 memory=4 aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
   | tee "$OUT/receipt.txt"
 printf '%s\n' "$OUT/objects.list"
