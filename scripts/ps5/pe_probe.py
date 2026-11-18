@@ -70,6 +70,9 @@ _RUNTIME_DLL_AREAS = {
         "wsock32.dll", "ws2_32.dll", "mswsock.dll", "wininet.dll",
         "winhttp.dll", "iphlpapi.dll", "dnsapi.dll",
     },
+    "crypto": {
+        "bcrypt.dll", "ncrypt.dll", "crypt32.dll", "secur32.dll",
+    },
     "com_media": {
         "ole32.dll", "oleaut32.dll", "uuid.dll", "quartz.dll", "strmiids.dll",
         "mf.dll", "mfplat.dll", "mfreadwrite.dll", "wmvcore.dll",
