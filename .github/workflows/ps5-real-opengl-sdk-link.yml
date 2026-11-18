@@ -1,0 +1,123 @@
+name: PS5 real OpenGL SDK WGL link
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/wgl_egl_backend_ps5.*'
+      - 'ps5/graphics/wgl_platform_contract.*'
+      - 'tests/ps5/ps5_wgl_egl_real_sdk_probe.cpp'
+      - 'scripts/ps5/build-wgl-real-opengl-sdk.sh'
+      - '.github/workflows/ps5-real-opengl-sdk-link.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-real-sdk-and-link:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      ENCORE_VENDOR_SHA: 1e51d1f3383f149a599e36052aba7d887d4b1f77
+      OPENGL_ORIGIN_SHA: ad2807d41cef2681882a9ee0d20808779f74b7cd
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout pinned Encore vendor OpenGL snapshot
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: ${{ env.ENCORE_VENDOR_SHA }}
+          path: build/encore-vendor
+          persist-credentials: false
+          sparse-checkout: |
+            sources/opengl-source
+          sparse-checkout-cone-mode: true
+
+      - name: Verify vendored OpenGL provenance
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("build/encore-vendor/sources/opengl-source/VENDOR-ORIGIN.json")
+          d=json.loads(p.read_text())
+          assert d["commit"] == "${{ env.OPENGL_ORIGIN_SHA }}", d
+          assert d["name"] == "opengl-source", d
+          print("opengl-source provenance:", d["commit"], "tracked_files=", d["tracked_files"])
+          PY
+          cp -a build/encore-vendor/sources/opengl-source build/opengl-source
+
+      - name: Install OpenGL SDK build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git cmake ninja-build meson pkg-config bison flex \
+            clang-18 lld-18 llvm-18 ccache curl xz-utils ca-certificates \
+            python3-mako python3-yaml python3-packaging \
+            glslang-tools spirv-tools libegl1-mesa-dev libgl1-mesa-dev
+
+      - name: Download and verify Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang
+
+      - name: Fetch exact PS5 OpenGL transitive sources
+        working-directory: build/opengl-source
+        run: python3 tools/fetch-sources.py
+
+      - name: Build and install audited PS5 OpenGL 4.6 SDK
+        working-directory: build/opengl-source
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          PS5_OPENGL_SDK_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
+          MAKEFLAGS: -j2
+        run: |
+          make sdk-gl46
+          test -f "$PS5_OPENGL_SDK_PREFIX/manifest.sha256"
+          (cd "$PS5_OPENGL_SDK_PREFIX" && sha256sum --check --strict manifest.sha256)
+          grep -q 'EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR' tests/ps5/egl_public_gl46_compat.c
+
+      - name: Link reFrozen WGL backend against the installed PS5 OpenGL SDK
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          PS5_OPENGL_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
+        run: bash scripts/ps5/build-wgl-real-opengl-sdk.sh
+
+      - name: Inspect real-SDK link
+        run: |
+          OUT=build/ps5-real-opengl-sdk
+          ELF="$OUT/refrozen-wgl-real-opengl.elf"
+          file "$ELF" | tee "$OUT/file.txt"
+          llvm-readelf-18 -h -l -d "$ELF" > "$OUT/elf-metadata.txt"
+          llvm-nm-18 "$ELF" > "$OUT/symbols.txt"
+          llvm-nm-18 -u "$ELF" > "$OUT/undefined-symbols.txt" || true
+          sha256sum "$ELF" > "$OUT/SHA256SUMS"
+          grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' "$OUT/elf-metadata.txt"
+          grep -q 'REFROZEN_PS5_REAL_EGL pass=1' <(strings "$ELF")
+          for symbol in eglGetDisplay eglInitialize eglCreateContext eglMakeCurrent eglSwapBuffers; do
+            grep -q " $symbol$" "$OUT/symbols.txt"
+          done
+          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
+            cat "$OUT/forbidden-strings.txt" >&2
+            exit 1
+          fi
+          cat "$OUT/undefined-symbols.txt"
+          cat "$OUT/SHA256SUMS"
+
+      - name: Upload real OpenGL SDK link evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-ps5-real-opengl-sdk-link
+          path: |
+            build/ps5-real-opengl-sdk/refrozen-wgl-real-opengl.elf
+            build/ps5-real-opengl-sdk/file.txt
+            build/ps5-real-opengl-sdk/elf-metadata.txt
+            build/ps5-real-opengl-sdk/undefined-symbols.txt
+            build/ps5-real-opengl-sdk/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
