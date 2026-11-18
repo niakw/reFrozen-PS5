@@ -8,6 +8,10 @@
 
 using namespace refrozen::ps5;
 
+static_assert(RoundGuestMappingSize(0x5000, kPs5KernelGranule) == 0x8000);
+static_assert(RoundGuestMappingSize(0x4000, kPs5KernelGranule) == 0x4000);
+static_assert(RoundGuestMappingSize(0, kPs5KernelGranule) == 0);
+static_assert(RoundGuestMappingSize(UINT64_MAX, kPs5KernelGranule) == 0);
 static_assert(CheckEncoreGuestVaPolicy(0x140000000ULL, 0x02000000ULL) ==
               GuestVaPolicy::allowed);
 static_assert(CheckEncoreGuestVaPolicy(0x180000000ULL, 0x02000000ULL) ==
