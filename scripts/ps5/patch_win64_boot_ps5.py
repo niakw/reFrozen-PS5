@@ -164,6 +164,25 @@ static int bundled_image(const char *argv0, char *out, size_t n) {
 
     replace_once(
         boot,
+        """    rt_init();
+""",
+        """    rt_init();
+    // Native PS5 services must be ready before the guest image executes.
+    // Keep the hook weak so public synthetic/runtime tests can link without
+    // the registered-title frontend.
+    extern int rt_ps5_frontend_init(void) __attribute__((weak));
+    if (rt_ps5_frontend_init) {
+        const int frontend_rc = rt_ps5_frontend_init();
+        if (frontend_rc != 0) {
+            rt_log("[boot] PS5 frontend initialization failed: %d\\n", frontend_rc);
+            return 1;
+        }
+    }
+""",
+    )
+
+    replace_once(
+        boot,
         """    // absolute paths: the game chdirs into its folder before it ever relaunches
     boot_nprefix = dev ? 3 : 1;
     boot_prefix = calloc(4, sizeof *boot_prefix);
