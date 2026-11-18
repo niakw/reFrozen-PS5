@@ -91,6 +91,104 @@ extern "C" void di_mouse_button(int button, int down) {
     replace_exact(path, anchor, hooks)
 
 
+
+def patch_win32_audio_output(rt: Path) -> None:
+    """Route SwARc's mixer to the native PS5 48 kHz threaded output driver."""
+    header = rt / "audio" / "mixer.h"
+    replace_exact(header, "struct SDL_AudioStream;\n",
+                  "struct refrozen_ps5_win32_audio_driver;\n")
+    replace_exact(
+        header,
+        "  SDL_AudioStream* stream_ = nullptr;\n",
+        "  refrozen_ps5_win32_audio_driver* stream_ = nullptr;\n",
+    )
+
+    source = rt / "audio" / "mixer.cpp"
+    replace_exact(
+        source,
+        "#include <SDL3/SDL.h>\n",
+        '#include "ps5_win32_audio_driver.h"\n',
+    )
+    replace_exact(
+        source,
+        """void SDLCALL AudioCallback(void* ud, SDL_AudioStream* s, int additional, int) {
+  auto* m = static_cast<Mixer*>(ud);
+  float buf[kChunk * 2];
+  int frames = additional / int(2 * sizeof(float));
+  while (frames > 0) {
+    int n = std::min(frames, kChunk);
+    m->Mix(buf, n);
+    SDL_PutAudioStreamData(s, buf, n * int(2 * sizeof(float)));
+    frames -= n;
+  }
+}
+""",
+        """void Ps5AudioCallback(void* ud, float* out, int frames) {
+  static_cast<Mixer*>(ud)->Mix(out, frames);
+}
+""",
+    )
+    replace_exact(
+        source,
+        """bool Mixer::Open(int rate) {
+  if (stream_) return true;
+  if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+    WarnF("audio: SDL audio init failed: %s\\n", SDL_GetError());
+    return false;
+  }
+  SDL_AudioSpec spec{SDL_AUDIO_F32, 2, rate};
+  stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
+                                      AudioCallback, this);
+  if (!stream_) {
+    WarnF("audio: cannot open a playback device: %s\\n", SDL_GetError());
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    return false;
+  }
+  Init(rate);  // the device starts paused: no Mix runs yet
+  SDL_ResumeAudioStreamDevice(stream_);
+  WarnF("audio: %d Hz stereo on SDL driver '%s'\\n", rate,
+        SDL_GetCurrentAudioDriver());
+  return true;
+}
+""",
+        """bool Mixer::Open(int rate) {
+  if (stream_) return true;
+  Init(rate);
+  stream_ = refrozen_ps5_win32_audio_driver_start(
+      uint32_t(rate), this, Ps5AudioCallback);
+  if (!stream_) {
+    WarnF("audio: cannot open PS5 48 kHz playback for %d Hz source\\n", rate);
+    reverb_.Close();
+    rate_ = 0;
+    return false;
+  }
+  WarnF("audio: %d Hz stereo -> PS5 48000 Hz native output\\n", rate);
+  return true;
+}
+""",
+    )
+    replace_exact(
+        source,
+        """void Mixer::Close() {
+  if (stream_) {
+    SDL_DestroyAudioStream(stream_);  // stops the callback first
+    stream_ = nullptr;
+    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+  }
+  reverb_.Close();
+}
+""",
+        """void Mixer::Close() {
+  if (stream_) {
+    refrozen_ps5_win32_audio_driver_stop(stream_);
+    stream_ = nullptr;
+  }
+  reverb_.Close();
+}
+""",
+    )
+
+
 def apply(root: Path) -> None:
     rt = root / "src" / "runtime"
     if not rt.is_dir():
@@ -99,6 +197,8 @@ def apply(root: Path) -> None:
     patch_monotonic_timing(rt)
 
     patch_win32_raw_input_hooks(rt)
+
+    patch_win32_audio_output(rt)
 
     guest = rt / "guest_memory.cpp"
     replace_exact(
