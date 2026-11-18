@@ -59,8 +59,12 @@ The map is metadata only; it contains no Warcraft code or assets.
      them.
 
 5. **Timing / init / errors**
-   - Replace trivial SDL timing/init helpers with platform-neutral or PS5
-     services where that removes a dependency cleanly.
+   - `SDL_GetTicks` and `SDL_GetTicksNS` are replaced only on the PS5-patched
+     Win32 runtime by `platform::MonotonicNs()` (milliseconds are an integer
+     division by 1,000,000), preserving the monotonic clock semantics without
+     adding a new host API.
+   - Replace other trivial SDL init/error helpers only when their observable
+     behavior is preserved.
    - Preserve observable failure behavior and error reporting.
 
 ## Acceptance order
