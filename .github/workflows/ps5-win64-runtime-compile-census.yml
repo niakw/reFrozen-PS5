@@ -6,6 +6,7 @@ on:
       - 'scripts/ps5/patch_win64_runtime.py'
       - 'scripts/ps5/patch_win64_rt_ps5.py'
       - 'ps5/runtime/win64_memory_bridge_ps5.h'
+      - 'tests/ps5/x86_64_fiber_swap_test.c'
       - '.github/workflows/ps5-win64-runtime-compile-census.yml'
   workflow_dispatch:
 permissions:
@@ -30,6 +31,12 @@ jobs:
         run: python scripts/ps5/patch_win64_runtime.py build/nightsight/runtime
       - name: Apply PS5 Win64 core memory edits
         run: python scripts/ps5/patch_win64_rt_ps5.py build/nightsight/runtime
+      - name: Execute x86-64 fiber context switch contract
+        run: |
+          mkdir -p build
+          clang -std=gnu11 -O2 -Wall -Wextra -Werror tests/ps5/x86_64_fiber_swap_test.c -o build/fiber-swap-test
+          ./build/fiber-swap-test | tee build/fiber-swap-test.log
+          grep -q "x86_64_fiber_swap: PASS" build/fiber-swap-test.log
       - name: Download and verify Payload SDK
         run: |
           mkdir -p build/sdk-download build/sdk-root
@@ -50,7 +57,7 @@ jobs:
               sed -n '1,16p' "build/runtime-census/logs/$unit.log"
             fi
           done < <(tail -n +2 build/runtime-census/results.tsv)
-          for unit in files.c handles.c input.c kernel32.c native.c pdh.c rt.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
+          for unit in fiber.c files.c handles.c input.c kernel32.c native.c pdh.c rt.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
             grep -Eq "^${unit}[[:space:]]+PASS$" build/runtime-census/results.tsv
           done
       - name: Upload compiler evidence
