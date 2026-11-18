@@ -47,3 +47,22 @@ jobs:
         run: cmake --build build/ps5-host --parallel 2
       - name: Test bounds and overlap semantics
         run: ctest --test-dir build/ps5-host --output-on-failure
+
+  host-object-mode:
+    name: host C++ object-only fixture
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile synthetic guest fixture without linking
+        run: |
+          cmake -S tests/ps5 -B build/ps5-host-object -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
+          cmake --build build/ps5-host-object --target guest32_ranges_compile --parallel 2
+          test -s build/ps5-host-object/CMakeFiles/guest32_ranges_compile.dir/guest32_ranges_test.cpp.o
+      - name: Verify PS5 SDK smoke script fails closed without SDK
+        run: |
+          bash -n scripts/ps5/compile-guest32-object.sh
+          if env -u PS5_PAYLOAD_SDK bash scripts/ps5/compile-guest32-object.sh > build/sdk-smoke-no-sdk.log 2>&1; then
+            echo "SDK probe unexpectedly passed without PS5_PAYLOAD_SDK" >&2
+            exit 1
+          fi
+          grep -q "PS5_PAYLOAD_SDK must point" build/sdk-smoke-no-sdk.log
