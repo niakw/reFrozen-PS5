@@ -33,6 +33,7 @@ class EglWglBackend {
   static bool MakeCurrent(void* user, BackendContext context, DeviceContext dc);
   static bool ClearCurrent(void* user);
   static bool SwapBuffers(void* user, DeviceContext dc);
+  static bool SetSwapInterval(void* user, int interval);
   static void* GetProcAddress(void* user, const char* name);
 };
 
