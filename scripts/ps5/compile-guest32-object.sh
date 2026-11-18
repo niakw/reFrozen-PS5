@@ -22,8 +22,8 @@ cmake -S "$ROOT/tests/ps5" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
 cmake --build "$BUILD" --target \
   guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile \
-  ps5_exact_reservation_adapter_compile --parallel 2
-for name in guest32_ranges guest64_ranges exact_guest_reservation; do
+  pe_image_materializer_compile ps5_exact_reservation_adapter_compile --parallel 2
+for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_materializer; do
   object="$BUILD/CMakeFiles/${name}_compile.dir/${name}_test.cpp.o"
   if [[ ! -s "$object" ]]; then
     echo "Missing PS5 compile-only object: $object" >&2
