@@ -1,0 +1,159 @@
+name: PS5 OpenGL 1.0.2 WGL link and registered-title package
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/**'
+      - 'scripts/ps5/fetch-verified-opengl-sdk.sh'
+      - 'scripts/ps5/build-wgl-real-opengl-sdk.sh'
+      - 'scripts/ps5/build-native-wgl-title.sh'
+      - 'scripts/ps5/verify-wgl-title-receipt.py'
+      - 'tests/ps5/ps5_wgl_egl_real_sdk_probe.cpp'
+      - 'tests/ps5/ps5_wgl_egl_title_probe.cpp'
+      - 'tests/test_ps5_opengl_sdk_fetch_recipe.py'
+      - 'tests/test_ps5_native_wgl_title_recipe.py'
+      - 'tests/test_ps5_wgl_title_receipt.py'
+      - '.github/workflows/ps5-opengl-102-gates.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-and-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      ENCORE_VENDOR_SHA: 1e51d1f3383f149a599e36052aba7d887d4b1f77
+      OPENGL_ARCHIVE_SHA256: 30d8e51dd062739b629346102be5932728ba714bc50b1bdcdf08306c8843d9a4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate fetch, packaging and hardware-receipt recipes
+        run: |
+          python -m unittest tests.test_ps5_opengl_sdk_fetch_recipe tests.test_ps5_native_wgl_title_recipe tests.test_ps5_wgl_title_receipt -v
+
+      - name: Install host and PS5 link tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential make curl unzip ca-certificates \
+            clang-18 lld-18 llvm-18 libclang-rt-18-dev ccache
+
+      - name: Checkout pinned Encore OpenGL integration sources and native boilerplate
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: ${{ env.ENCORE_VENDOR_SHA }}
+          path: build/encore-vendor
+          persist-credentials: false
+          sparse-checkout: |
+            sources/opengl-source
+            sources/opengl-native-boilerplate
+          sparse-checkout-cone-mode: true
+
+      - name: Verify pinned integration-source identities
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('build/encore-vendor')
+          expected={
+            'sources/opengl-source/VENDOR-ORIGIN.json': 'opengl-source',
+            'sources/opengl-native-boilerplate/VENDOR-ORIGIN.json': 'opengl-native-boilerplate',
+          }
+          for rel,name in expected.items():
+              d=json.loads((root/rel).read_text())
+              assert d['name']==name, d
+              assert len(d['commit'])==40, d
+              print(name, d['commit'], 'tracked_files=', d['tracked_files'])
+          PY
+
+      - name: Download and verify Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf "%s  %s\n" "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum --check --strict
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-lld
+          echo "PS5_PAYLOAD_SDK=$GITHUB_WORKSPACE/build/sdk-root/ps5-payload-sdk" >> "$GITHUB_ENV"
+
+      - name: Download, safely extract and manifest-verify preserved OpenGL SDK 1.0.2
+        env:
+          REFROZEN_PS5_OPENGL_ARCHIVE_SHA256: ${{ env.OPENGL_ARCHIVE_SHA256 }}
+        run: |
+          bash scripts/ps5/fetch-verified-opengl-sdk.sh build/ps5-opengl-sdk-1.0.2
+          prefix="$(cat build/ps5-opengl-sdk-1.0.2/prefix.txt)"
+          test -d "$prefix"
+          echo "PS5_OPENGL_PREFIX=$prefix" >> "$GITHUB_ENV"
+          cat build/ps5-opengl-sdk-1.0.2/receipt.txt
+
+      - name: Link reFrozen WGL backend against verified OpenGL SDK 1.0.2
+        run: bash scripts/ps5/build-wgl-real-opengl-sdk.sh
+
+      - name: Inspect WGL consumer ELF
+        run: |
+          OUT=build/ps5-real-opengl-sdk
+          ELF="$OUT/refrozen-wgl-real-opengl.elf"
+          llvm-strip-18 --strip-debug "$ELF"
+          file "$ELF" | tee "$OUT/file.txt"
+          llvm-readelf-18 -h -l -d "$ELF" > "$OUT/elf-metadata.txt"
+          llvm-nm-18 "$ELF" > "$OUT/symbols.txt"
+          llvm-nm-18 -u "$ELF" > "$OUT/undefined-symbols.txt" || true
+          sha256sum "$ELF" > "$OUT/SHA256SUMS"
+          grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' "$OUT/elf-metadata.txt"
+          grep -q 'REFROZEN_PS5_REAL_EGL pass=%d' <(strings "$ELF")
+          for symbol in eglGetDisplay eglInitialize eglCreateContext eglMakeCurrent eglSwapBuffers; do
+            grep -q " $symbol$" "$OUT/symbols.txt"
+          done
+          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
+            cat "$OUT/forbidden-strings.txt" >&2
+            exit 1
+          fi
+
+      - name: Build registered PPSA99006 compatibility-profile title
+        env:
+          REFROZEN_OPENGL_SOURCE_ROOT: ${{ github.workspace }}/build/encore-vendor/sources/opengl-source
+          REFROZEN_NATIVE_TEMPLATE: ${{ github.workspace }}/build/encore-vendor/sources/opengl-native-boilerplate
+          BUILD_JOBS: '2'
+          USE_CCACHE: '1'
+        run: bash scripts/ps5/build-native-wgl-title.sh
+
+      - name: Inspect packaged title
+        run: |
+          ROOT=build/native-wgl-title/PPSA99006
+          DIST="$ROOT/dist/PPSA99006"
+          test -s "$DIST/eboot.bin"
+          test -s "$DIST/sce_module/libc.prx"
+          grep -q '"titleId": "PPSA99006"' "$DIST/sce_sys/param.json"
+          file "$DIST/eboot.bin" | tee "$ROOT/build/eboot-file.txt"
+          sha256sum "$DIST/eboot.bin" "$DIST/sce_module/libc.prx" | tee "$ROOT/build/dist-sha256.txt"
+          strings "$ROOT/build/eboot.elf" > "$ROOT/build/eboot-strings.txt"
+          grep -q 'REFROZEN_PS5_WGL_TITLE pass=%d' "$ROOT/build/eboot-strings.txt"
+          if grep -E 'Warcraft|Blizzard|/home/runner/work/' "$ROOT/build/eboot-strings.txt" > "$ROOT/build/forbidden-strings.txt"; then
+            cat "$ROOT/build/forbidden-strings.txt" >&2
+            exit 1
+          fi
+
+      - name: Upload link evidence and registered title
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-ps5-opengl-102-wgl-PPSA99006
+          path: |
+            build/ps5-opengl-sdk-1.0.2/receipt.txt
+            build/ps5-real-opengl-sdk/file.txt
+            build/ps5-real-opengl-sdk/elf-metadata.txt
+            build/ps5-real-opengl-sdk/undefined-symbols.txt
+            build/ps5-real-opengl-sdk/SHA256SUMS
+            build/native-wgl-title/PPSA99006/dist/PPSA99006/**
+            build/native-wgl-title/PPSA99006/build/title-sha256.txt
+            build/native-wgl-title/PPSA99006/build/dist-sha256.txt
+            build/native-wgl-title/PPSA99006/build/eboot-file.txt
+          if-no-files-found: error
+          retention-days: 14
