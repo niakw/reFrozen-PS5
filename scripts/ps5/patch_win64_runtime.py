@@ -82,6 +82,14 @@ static uint32_t now_ms(void) { return (uint32_t)(monotonic_ns() / 1000000); }
     )
     replace_once(
         kernel32,
+        """#include <pthread.h>
+""",
+        """#include <pthread.h>
+#include <pthread_np.h>
+""",
+    )
+    replace_once(
+        kernel32,
         """// ---------------- time ----------------
 static uint64_t filetime_now(void) {
 """,
@@ -154,6 +162,15 @@ void I_kernel32_dll_GetTickCount64(CPU *c) { RET(monotonic_ns() / 1000000); }
             text.replace(old, old.replace("malloc_size", "malloc_usable_size")),
             encoding="utf-8",
         )
+
+    replace_once(
+        kernel32,
+        """            if (name && (tid == 0xFFFFFFFFu || tid == rt_thread_id())) pthread_setname_np(name);
+""",
+        """            if (name && (tid == 0xFFFFFFFFu || tid == rt_thread_id())) pthread_set_name_np(pthread_self(), name);
+""",
+    )
+
 
 
 def main() -> int:
