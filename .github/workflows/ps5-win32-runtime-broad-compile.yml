@@ -20,7 +20,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl unzip clang-18 llvm-18
+          sudo apt-get install -y --no-install-recommends curl unzip clang-18 llvm-18 lld-18
       - name: Download and verify Payload SDK
         run: |
           mkdir -p build/sdk-download build/sdk-root
@@ -108,6 +108,47 @@ jobs:
               )
           print("WIN32_RUNTIME_BASELINE pass=1 min_pass=55 critical_units=9")
           PY
+      - name: Compile and relocatably link nine essential Win32 runtime objects
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set -euo pipefail
+          CC="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          RUNTIME="$GITHUB_WORKSPACE/build/x86recomp/src/runtime"
+          SDL="$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include"
+          OUT="$GITHUB_WORKSPACE/build/win32-objects"
+          mkdir -p "$OUT"
+          units=(
+            platform.cpp process.cpp stall.cpp dispatch.cpp
+            guest_memory.cpp guest_alloc.cpp pe_image.cpp
+            hle/opengl32.cpp hle/wsock32_socket.cpp
+          )
+          objs=()
+          for unit in "${units[@]}"; do
+            object="$OUT/$(printf '%s' "$unit" | tr '/' '_').o"
+            "$CC" -std=c++20 -O0 -g0 -fPIC \
+              -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$SDL" \
+              -c "$RUNTIME/$unit" -o "$object"
+            test -s "$object"
+            objs+=("$object")
+          done
+          ld.lld-18 -r "${objs[@]}" -o "$OUT/win32-first-host-core.o"
+          test -s "$OUT/win32-first-host-core.o"
+          llvm-readobj-18 --file-headers "$OUT/win32-first-host-core.o" > "$OUT/elf-header.txt"
+          grep -Eq 'Machine: EM_X86_64|Arch: x86_64' "$OUT/elf-header.txt"
+          llvm-nm-18 --undefined-only "$OUT/win32-first-host-core.o" | sort -u > "$OUT/unresolved-symbols.txt"
+          printf 'REFROZEN_PS5_WIN32_CORE_OBJECTS pass=1 objects=9 aggregate=1 undefined_symbols=%s\n' \
+            "$(wc -l < "$OUT/unresolved-symbols.txt" | tr -d ' ')" | tee "$OUT/receipt.txt"
+      - name: Preserve essential Win32 object compiler/link evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-first-host-core-evidence
+          path: |
+            build/win32-objects/receipt.txt
+            build/win32-objects/elf-header.txt
+            build/win32-objects/unresolved-symbols.txt
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload compiler census only
         uses: actions/upload-artifact@v4
         with:
