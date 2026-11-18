@@ -152,9 +152,9 @@ static inline CCCryptorStatus CCCrypt(
     const EVP_CIPHER* cipher = refrozen_ps5_aes_cipher(key_len, ecb);
     if (!cipher || (!ecb && !iv)) return kCCParamError;
 
-    const size_t worst =
-        encrypt && padding ? data_in_len + EVP_MAX_BLOCK_LENGTH : data_in_len;
-    if (data_out_available < worst && encrypt && padding)
+    const size_t required =
+        encrypt && padding ? (data_in_len / 16 + 1) * 16 : data_in_len;
+    if (data_out_available < required)
         return kCCBufferTooSmall;
     if (data_out_available < data_in_len && !padding)
         return kCCBufferTooSmall;
