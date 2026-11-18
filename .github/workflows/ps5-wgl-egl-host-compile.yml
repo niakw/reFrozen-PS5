@@ -1,0 +1,31 @@
+name: WGL EGL backend compile check
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/**'
+      - 'tests/ps5/**'
+      - '.github/workflows/ps5-wgl-egl-host-compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  egl-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install public EGL/OpenGL development headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libegl-dev libgl-dev
+      - name: Configure host contract and EGL compile probe
+        run: |
+          cmake -S tests/ps5 -B build/wgl-egl             -DCMAKE_BUILD_TYPE=Debug             -DREFROZEN_EGL_BACKEND_CHECK=ON
+      - name: Build WGL contract and EGL backend with strict warnings
+        run: cmake --build build/wgl-egl --target wgl_platform_contract_test wgl_egl_backend_compile --parallel 2
+      - name: Run host WGL contract
+        run: |
+          ./build/wgl-egl/wgl_platform_contract_test | tee build/wgl-contract.log
+          grep -q 'wgl_platform_contract: PASS' build/wgl-contract.log
