@@ -111,3 +111,17 @@ if(REFROZEN_PS5_COMPILE_ONLY)
                            -Wall -Wextra -Werror -Wpedantic -Wconversion)
   endif()
 endif()
+
+add_executable(wgl_platform_contract_test
+               wgl_platform_contract_test.cpp
+               "../../ps5/graphics/wgl_platform_contract.cpp")
+target_compile_features(wgl_platform_contract_test PRIVATE cxx_std_20)
+target_include_directories(wgl_platform_contract_test PRIVATE
+                           "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/graphics")
+if(MSVC)
+  target_compile_options(wgl_platform_contract_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(wgl_platform_contract_test PRIVATE
+                         -Wall -Wextra -Werror -Wpedantic -Wconversion)
+endif()
+add_test(NAME wgl_platform_contract COMMAND wgl_platform_contract_test)
