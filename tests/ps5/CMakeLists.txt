@@ -25,6 +25,7 @@ endfunction()
 add_guest_layout_fixture(guest32_ranges)
 add_guest_layout_fixture(guest64_ranges)
 add_guest_layout_fixture(exact_guest_reservation)
+add_guest_layout_fixture(pe_image_materializer)
 
 if(REFROZEN_PS5_COMPILE_ONLY)
   add_library(ps5_exact_reservation_adapter_compile OBJECT
