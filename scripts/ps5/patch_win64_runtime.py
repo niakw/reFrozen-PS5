@@ -32,8 +32,9 @@ def patch_runtime(runtime: Path) -> None:
     system = runtime / "system.c"
     window = runtime / "window.c"
     kernel32 = runtime / "kernel32.c"
-    if not all(path.is_file() for path in (system, window, kernel32)):
-        raise PatchError("pinned runtime is missing system.c/window.c/kernel32.c")
+    handles = runtime / "handles.c"
+    if not all(path.is_file() for path in (system, window, kernel32, handles)):
+        raise PatchError("pinned runtime is missing system.c/window.c/kernel32.c/handles.c")
 
     replace_once(
         system,
@@ -173,6 +174,47 @@ void I_kernel32_dll_GetTickCount64(CPU *c) { RET(monotonic_ns() / 1000000); }
 
 
 
+    replace_once(
+        handles,
+        """#include <mach/mach_time.h>
+""",
+        """""",
+    )
+    replace_once(
+        handles,
+        """static void deadline(struct timespec *ts, uint32_t ms) {
+""",
+        """static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+static void deadline(struct timespec *ts, uint32_t ms) {
+""",
+    )
+    replace_once(
+        handles,
+        """extern void cocoa_pump(int wait_ms);
+""",
+        """static void cocoa_pump(int wait_ms) { (void)wait_ms; }
+""",
+    )
+    replace_once(
+        handles,
+        """    int on_main = pthread_main_np();
+""",
+        """    int on_main = 0;  // PS5 has no AppKit main-run-loop ownership.
+""",
+    )
+    replace_once(
+        handles,
+        """            uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+""",
+        """            uint64_t now = monotonic_ns();
+""",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
@@ -181,7 +223,7 @@ def main() -> int:
         patch_runtime(args.runtime)
     except (OSError, PatchError) as exc:
         parser.error(str(exc))
-    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c")
+    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c handles.c")
     return 0
 
 
