@@ -3,7 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.ps5.runtime_gap_report import build_gap_report, reference_hle_surface
+from scripts.ps5.runtime_gap_report import (
+    build_gap_report, reference_hle_surface, reference_win64_surface,
+)
 
 
 class RuntimeGapReportTest(unittest.TestCase):
@@ -21,8 +23,8 @@ class RuntimeGapReportTest(unittest.TestCase):
                 "results": [{
                     "file": "synthetic.exe",
                     "sha256": "00" * 32,
-                    "machine": "x86_64",
-                    "pe_bits": 64,
+                    "machine": "x86",
+                    "pe_bits": 32,
                     "imports": [{
                         "dll": "KERNEL32.dll",
                         "dll_normalized": "kernel32.dll",
@@ -46,6 +48,61 @@ class RuntimeGapReportTest(unittest.TestCase):
             self.assertTrue(all(x["ps5_status"] == "unverified" for x in symbols))
             self.assertTrue(all("resolved_name" in x for x in symbols))
             self.assertEqual(report["missing_by_dll"], {"kernel32.dll": ["CreateFileW"]})
+
+
+    def test_win64_surface_is_architecture_specific_and_path_private(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "project"
+            patches = root / "patches" / "x86recomp"
+            patches.mkdir(parents=True)
+            (patches / "x.patch").write_text(
+                '+HLE("kernel32.dll", CreateFileW, 7) { return 0; }\n',
+                encoding="utf-8",
+            )
+            win64 = Path(temp) / "external-win64-runtime"
+            win64.mkdir()
+            (win64 / "kernel32.c").write_text(
+                "void I_kernel32_dll_VirtualAlloc(CPU *c) {}\n"
+                "void I_kernel32_dll_CreateThread(CPU *c) {}\n",
+                encoding="utf-8",
+            )
+            census = {
+                "results": [{
+                    "file": "classic64.exe",
+                    "machine": "x86_64",
+                    "pe_bits": 64,
+                    "imports": [{
+                        "dll": "KERNEL32.dll",
+                        "dll_normalized": "kernel32.dll",
+                        "runtime_area": "core",
+                        "symbols": ["VirtualAlloc", "CreateFileW", "MissingApi"],
+                    }],
+                }]
+            }
+            report = build_gap_report(census, root, win64)
+            self.assertEqual(
+                report["modules"][0]["target_runtime"], "win64_candidate")
+            symbols = report["modules"][0]["imports"][0]["symbols"]
+            self.assertEqual(
+                [x["reference_status"] for x in symbols],
+                ["reference_win64_hle", "reference_other_arch", "unmapped"],
+            )
+            self.assertEqual(
+                report["missing_by_dll"],
+                {"kernel32.dll": ["CreateFileW", "MissingApi"]},
+            )
+            self.assertEqual(
+                report["reference_surfaces"]["win64_candidate"]["handler_count"], 2)
+            self.assertTrue(
+                report["reference_surfaces"]["win64_candidate"]["complete"])
+            self.assertIsNone(
+                report["reference_surfaces"]["win64_candidate"]["root_recorded"])
+            self.assertNotIn(str(win64), str(report))
+            self.assertEqual(
+                reference_win64_surface(win64),
+                {("kernel32.dll", "VirtualAlloc"),
+                 ("kernel32.dll", "CreateThread")},
+            )
 
     def test_local_guest_dll_resolves_named_and_ordinal_imports(self):
         with tempfile.TemporaryDirectory() as temp:
