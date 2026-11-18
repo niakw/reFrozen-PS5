@@ -56,12 +56,49 @@ def patch_monotonic_timing(rt: Path) -> None:
         path.write_text(text, encoding="utf-8")
 
 
+
+def patch_win32_raw_input_hooks(rt: Path) -> None:
+    """Expose native PS5 pad events through SwARc's existing RawInput sink."""
+    path = rt / "hle" / "user32_input.cpp"
+    anchor = """void EmitRawInput(RawInput::Kind kind, uint8_t code, int32_t value) {
+  if (RawInputSink sink = g_raw_sink) sink({kind, code, value, TickCount()});
+}
+
+"""
+    hooks = """void EmitRawInput(RawInput::Kind kind, uint8_t code, int32_t value) {
+  if (RawInputSink sink = g_raw_sink) sink({kind, code, value, TickCount()});
+}
+
+// Native PS5 pad bridge entry points. These intentionally feed DirectInput's
+// existing RawInput path only; window-message state remains owned by user32.
+extern "C" void di_key(uint32_t scan, int ext, int down) {
+  const uint8_t dik = uint8_t(scan | (ext ? 0x80u : 0u));
+  EmitRawInput(RawInput::Key, dik, down ? 1 : 0);
+}
+extern "C" void di_mouse_move(int dx, int dy) {
+  if (dx) EmitRawInput(RawInput::MouseX, 0, dx);
+  if (dy) EmitRawInput(RawInput::MouseY, 0, dy);
+}
+extern "C" void di_mouse_wheel(int dz) {
+  if (dz) EmitRawInput(RawInput::Wheel, 0, dz);
+}
+extern "C" void di_mouse_button(int button, int down) {
+  if (button < 0 || button > 7) return;
+  EmitRawInput(RawInput::MouseButton, uint8_t(button), down ? 1 : 0);
+}
+
+"""
+    replace_exact(path, anchor, hooks)
+
+
 def apply(root: Path) -> None:
     rt = root / "src" / "runtime"
     if not rt.is_dir():
         raise SystemExit(f"runtime directory not found: {rt}")
 
     patch_monotonic_timing(rt)
+
+    patch_win32_raw_input_hooks(rt)
 
     guest = rt / "guest_memory.cpp"
     replace_exact(
