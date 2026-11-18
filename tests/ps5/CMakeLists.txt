@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(refrozen_ps5_host_gates LANGUAGES CXX)
+project(refrozen_ps5_host_gates LANGUAGES C CXX)
 
 enable_testing()
 option(REFROZEN_PS5_COMPILE_ONLY "Compile the fixtures into objects without linking host executables" OFF)
@@ -156,4 +156,17 @@ if(REFROZEN_EGL_BACKEND_CHECK)
     target_compile_options(wgl_egl_backend_compile PRIVATE
                            -Wall -Wextra -Werror -Wpedantic -Wconversion)
   endif()
+endif()
+
+if(NOT REFROZEN_PS5_COMPILE_ONLY)
+  add_executable(ps5_audio_out_bridge_test
+    ps5_audio_out_bridge_test.c
+    ../../ps5/runtime/ps5_audio_out_bridge.c)
+  target_include_directories(ps5_audio_out_bridge_test PRIVATE ../../ps5/runtime)
+  if(MSVC)
+    target_compile_options(ps5_audio_out_bridge_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_audio_out_bridge_test PRIVATE -Wall -Wextra -Werror -Wpedantic)
+  endif()
+  add_test(NAME ps5_audio_out_bridge COMMAND ps5_audio_out_bridge_test)
 endif()

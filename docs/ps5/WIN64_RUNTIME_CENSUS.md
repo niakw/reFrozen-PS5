@@ -145,3 +145,28 @@ xaudio2.c
 ```
 
 For the selected Warcraft Classic OpenGL path, `steam.c` and `vulkan.c` are not first-launch requirements. Audio is the next platform runtime priority; `bcrypt.c` should be driven by the exact private import census rather than implemented speculatively.
+
+
+## Native XAudio2 output increment
+
+The Win64 XAudio2 engine now compiles for the PS5 ABI with its guest-facing logic unchanged. Only the macOS host output was replaced:
+
+- CoreAudio / Mach dependencies removed from `xaudio2.c`;
+- the existing XAudio2 voice graph, source/submix/master mixing, callbacks, effects and 10 ms render pass remain intact;
+- stereo float output feeds `ps5_audio_out_bridge.c`, which converts to S16 and submits blocking 256-frame grains through `sceAudioOut`;
+- silent fallback uses `CLOCK_MONOTONIC`;
+- the bridge itself is compiled with Payload SDK v0.42 under `-Wall -Wextra -Werror`;
+- a host test verifies float→S16 conversion, exact 256-frame buffering, final zero padding, drain and close semantics.
+
+Compiler evidence: runtime census run `44270441940` reports **19 PASS / 4 FAIL**, including `xaudio2.c PASS`.
+
+Remaining compiler-red units:
+
+```text
+bcrypt.c
+steam.c
+vulkan.c
+wasapi.c
+```
+
+For the selected OpenGL Warcraft path, Steam and the macOS Vulkan runtime remain outside the first-launch route. WASAPI can reuse the same native AudioOut bridge if the exact Warcraft binary imports it. `bcrypt.c` remains import-driven rather than speculative.
