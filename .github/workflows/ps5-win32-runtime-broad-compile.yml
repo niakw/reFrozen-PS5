@@ -9,6 +9,10 @@ on:
       - 'scripts/ps5/patch_x86recomp_runtime_ps5.py'
       - 'tests/test_ps5_x86recomp_timing_patch.py'
       - 'tests/test_ps5_win32_import_map.py'
+      - 'tests/test_ps5_win32_raw_input_hook_patch.py'
+      - 'ps5/runtime/ps5_dinput_pad_bridge.cpp'
+      - 'ps5/runtime/ps5_dinput_pad_bridge.hpp'
+      - 'ps5/runtime/ps5_pad_contract.hpp'
       - '.github/workflows/ps5-win32-runtime-broad-compile.yml'
   workflow_dispatch:
 permissions:
@@ -165,6 +169,204 @@ jobs:
             "$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include" \
             "$GITHUB_WORKSPACE/build/win32-broad-census/results.tsv" \
             "$GITHUB_WORKSPACE/build/win32-closure"
+      - name: Link native DualSense bridge into the Win32 RawInput runtime
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set -euo pipefail
+          CXX="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          OUT="$GITHUB_WORKSPACE/build/win32-closure"
+          "$CXX" -std=c++20 -O0 -g0 -fPIC \
+            -I"$GITHUB_WORKSPACE/ps5/runtime" \
+            -c ps5/runtime/ps5_dinput_pad_bridge.cpp \
+            -o "$OUT/ps5_dinput_pad_bridge.o"
+          test -s "$OUT/ps5_dinput_pad_bridge.o"
+          ld.lld-18 -r \
+            "$OUT/win32-runtime-closure.o" \
+            "$OUT/ps5_dinput_pad_bridge.o" \
+            -o "$OUT/win32-runtime-pad.o"
+          llvm-nm-18 --defined-only "$OUT/win32-runtime-pad.o" | sort -u \
+            > "$OUT/pad-defined-symbols.txt"
+          llvm-nm-18 --undefined-only "$OUT/win32-runtime-pad.o" | sort -u \
+            > "$OUT/pad-undefined-symbols.txt"
+          for hook in di_key di_mouse_move di_mouse_wheel di_mouse_button; do
+            grep -Eq "[[:space:]][Tt][[:space:]]+$hook$" "$OUT/pad-defined-symbols.txt"
+            if grep -Eq "[[:space:]]U[[:space:]]+$hook$" "$OUT/pad-undefined-symbols.txt"; then
+              echo "native pad hook unresolved after aggregation: $hook" >&2
+              exit 1
+            fi
+          done
+          grep -Eq '[[:space:]]U[[:space:]]+scePadReadState
+        run: |
+          python3 -B scripts/ps5/map_win32_runtime_imports.py \
+            build/win32-closure/object-results.tsv \
+            build/win32-closure/objects \
+            --out build/win32-closure/import-map.json
+          python3 - <<'PY'
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+          d=json.loads(Path("build/win32-closure/import-map.json").read_text())
+          print("unique SDL symbols:", d["unique_sdl_symbols"])
+          users=defaultdict(set)
+          for row in d["mappings"]:
+              if row["symbol"].startswith("SDL_"):
+                  users[row["category"]].add(row["file"])
+          for category, files in sorted(users.items()):
+              print(category, len(files), ", ".join(sorted(files)))
+          forbidden={"SDL_GetTicks","SDL_GetTicksNS"}
+          found=forbidden.intersection(d["sdl_symbols"])
+          if found:
+              raise SystemExit(f"SDL timing symbols still unresolved: {sorted(found)}")
+          if d["unique_sdl_symbols"] != 59:
+              raise SystemExit(
+                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 59"
+              )
+          print("REFROZEN_PS5_SDL_TIMING_REMOVED pass=1 symbols=SDL_GetTicks,SDL_GetTicksNS")
+          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=59")
+          PY
+      - name: Record patched public SDL call sites for adapter design
+        run: |
+          set -euo pipefail
+          RUNTIME="$GITHUB_WORKSPACE/build/x86recomp/src/runtime"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path("build/x86recomp/src/runtime")
+          out=[]
+          pattern=re.compile(r"\b(SDL_[A-Za-z0-9_]+)\s*\(")
+          for path in sorted(root.rglob("*")):
+              if path.suffix not in {".cpp",".cc",".h",".hpp"} or not path.is_file():
+                  continue
+              for number,line in enumerate(path.read_text(errors="replace").splitlines(),1):
+                  names=pattern.findall(line)
+                  if names:
+                      rel=path.relative_to(root).as_posix()
+                      out.append(f"{rel}:{number}\t{','.join(sorted(set(names)))}\t{line.strip()}")
+          Path("build/win32-closure/sdl-call-sites.tsv").write_text(
+              "site\tsymbols\tsource_line\n" + "\n".join(out) + "\n"
+          )
+          print("SDL call-site lines:", len(out))
+          PY
+          {
+            printf 'pattern\tlocation\tsource_line\n'
+            grep -R -n -E '(^|[^A-Za-z0-9_])(di_key|di_mouse_move|di_mouse_wheel|di_mouse_button)\s*\(' "$RUNTIME" \
+              | sed "s#^$RUNTIME/##" \
+              | awk -F: '{line=$1 ":" $2; $1=""; $2=""; sub(/^::?/,""); print "dinput_hook\t" line "\t" $0}' || true
+          } > build/win32-closure/native-bridge-hooks.tsv
+      - name: Preserve Win32 runtime closure symbol and ELF evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-closure
+          path: |
+            build/win32-closure/receipt.txt
+            build/win32-closure/elf-header.txt
+            build/win32-closure/unresolved-symbols.txt
+            build/win32-closure/defined-symbols.txt
+            build/win32-closure/object-results.tsv
+            build/win32-closure/import-map.json
+            build/win32-closure/sdl-call-sites.tsv
+            build/win32-closure/native-bridge-hooks.tsv
+            build/win32-closure/pad-receipt.txt
+            build/win32-closure/pad-defined-symbols.txt
+            build/win32-closure/pad-undefined-symbols.txt
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload compiler census only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-broad-compile-census
+          path: |
+            build/win32-broad-census/results.tsv
+            build/win32-broad-census/logs/*.log
+          if-no-files-found: error
+          retention-days: 3
+ "$OUT/pad-undefined-symbols.txt"
+          grep -Eq '[[:space:]]U[[:space:]]+sceUserServiceGetForegroundUser
+        run: |
+          python3 -B scripts/ps5/map_win32_runtime_imports.py \
+            build/win32-closure/object-results.tsv \
+            build/win32-closure/objects \
+            --out build/win32-closure/import-map.json
+          python3 - <<'PY'
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+          d=json.loads(Path("build/win32-closure/import-map.json").read_text())
+          print("unique SDL symbols:", d["unique_sdl_symbols"])
+          users=defaultdict(set)
+          for row in d["mappings"]:
+              if row["symbol"].startswith("SDL_"):
+                  users[row["category"]].add(row["file"])
+          for category, files in sorted(users.items()):
+              print(category, len(files), ", ".join(sorted(files)))
+          forbidden={"SDL_GetTicks","SDL_GetTicksNS"}
+          found=forbidden.intersection(d["sdl_symbols"])
+          if found:
+              raise SystemExit(f"SDL timing symbols still unresolved: {sorted(found)}")
+          if d["unique_sdl_symbols"] != 59:
+              raise SystemExit(
+                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 59"
+              )
+          print("REFROZEN_PS5_SDL_TIMING_REMOVED pass=1 symbols=SDL_GetTicks,SDL_GetTicksNS")
+          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=59")
+          PY
+      - name: Record patched public SDL call sites for adapter design
+        run: |
+          set -euo pipefail
+          RUNTIME="$GITHUB_WORKSPACE/build/x86recomp/src/runtime"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path("build/x86recomp/src/runtime")
+          out=[]
+          pattern=re.compile(r"\b(SDL_[A-Za-z0-9_]+)\s*\(")
+          for path in sorted(root.rglob("*")):
+              if path.suffix not in {".cpp",".cc",".h",".hpp"} or not path.is_file():
+                  continue
+              for number,line in enumerate(path.read_text(errors="replace").splitlines(),1):
+                  names=pattern.findall(line)
+                  if names:
+                      rel=path.relative_to(root).as_posix()
+                      out.append(f"{rel}:{number}\t{','.join(sorted(set(names)))}\t{line.strip()}")
+          Path("build/win32-closure/sdl-call-sites.tsv").write_text(
+              "site\tsymbols\tsource_line\n" + "\n".join(out) + "\n"
+          )
+          print("SDL call-site lines:", len(out))
+          PY
+          {
+            printf 'pattern\tlocation\tsource_line\n'
+            grep -R -n -E '(^|[^A-Za-z0-9_])(di_key|di_mouse_move|di_mouse_wheel|di_mouse_button)\s*\(' "$RUNTIME" \
+              | sed "s#^$RUNTIME/##" \
+              | awk -F: '{line=$1 ":" $2; $1=""; $2=""; sub(/^::?/,""); print "dinput_hook\t" line "\t" $0}' || true
+          } > build/win32-closure/native-bridge-hooks.tsv
+      - name: Preserve Win32 runtime closure symbol and ELF evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-closure
+          path: |
+            build/win32-closure/receipt.txt
+            build/win32-closure/elf-header.txt
+            build/win32-closure/unresolved-symbols.txt
+            build/win32-closure/defined-symbols.txt
+            build/win32-closure/object-results.tsv
+            build/win32-closure/import-map.json
+            build/win32-closure/sdl-call-sites.tsv
+            build/win32-closure/native-bridge-hooks.tsv
+          if-no-files-found: error
+          retention-days: 3
+      - name: Upload compiler census only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-broad-compile-census
+          path: |
+            build/win32-broad-census/results.tsv
+            build/win32-broad-census/logs/*.log
+          if-no-files-found: error
+          retention-days: 3
+ "$OUT/pad-undefined-symbols.txt"
+          printf 'REFROZEN_PS5_WIN32_DINPUT_PAD pass=1 hooks=4 native_imports=scePad,sceUserService\n' \
+            | tee "$OUT/pad-receipt.txt"
       - name: Map unresolved host imports back to runtime source units
         run: |
           python3 -B scripts/ps5/map_win32_runtime_imports.py \
