@@ -24,4 +24,17 @@ ExactReserveResult ReserveExactGuestRangePs5(
       });
 }
 
+ExactReserveResult ReserveExactGuestImagePs5(
+    std::uint64_t base, std::uint64_t logical_size,
+    std::uint64_t alignment) {
+  const auto mapped_size = RoundGuestMappingSize(logical_size, alignment);
+  if (!mapped_size) {
+    ExactReserveResult invalid{};
+    invalid.requested = static_cast<std::uintptr_t>(base);
+    invalid.status = ExactReserveStatus::invalid_arguments;
+    return invalid;
+  }
+  return ReserveExactGuestRangePs5(base, mapped_size, alignment);
+}
+
 }  // namespace refrozen::ps5
