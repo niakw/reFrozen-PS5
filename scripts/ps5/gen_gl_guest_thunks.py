@@ -5,7 +5,7 @@ The ABI mapping follows the same proven strategy as NightSight Recomp-Framework
 (MIT, tools/gen_gl.py), but this generator is deliberately allowlist-driven:
 it emits only functions requested by the exact local game/import census.
 
-Input headers must contain GLAPI ... APIENTRY glFoo(...) declarations.
+Input headers must contain GLAPI ... APIENTRY/GLAPIENTRY glFoo(...) declarations.
 No game binary or generated proprietary code is consumed here.
 """
 from __future__ import annotations
@@ -17,8 +17,10 @@ import re
 import sys
 
 PROTO_RE = re.compile(
-    r"^\s*GLAPI\s+(.+?)\s+APIENTRY\s+(gl\w+)\s*\((.*?)\)\s*;",
-    re.M | re.S,
+    r"^[ \\t]*GLAPI[ \\t]+([^;\\n]+?)[ \\t]+"
+    r"(?:APIENTRY|GLAPIENTRY)[ \\t]+(gl\\w+)[ \\t]*"
+    r"\\(([^;]*?)\\)[ \\t]*;",
+    re.M,
 )
 SPACE_RE = re.compile(r"\s+")
 
