@@ -72,14 +72,17 @@ template <class ReserveFn, class ReleaseFn>
   ExactReserveResult result{};
   result.requested = static_cast<std::uintptr_t>(base);
   result.observed = result.requested;
+  const auto policy = CheckEncoreGuestVaPolicy(base, size);
   if (!size || !alignment || (alignment & (alignment - 1)) != 0 ||
       (base & (alignment - 1)) != 0 || (size & (alignment - 1)) != 0 ||
       size > std::numeric_limits<std::size_t>::max() ||
       base > std::numeric_limits<std::uintptr_t>::max() ||
-      CheckEncoreGuestVaPolicy(base, size) != GuestVaPolicy::allowed) {
-    result.status = CheckEncoreGuestVaPolicy(base, size) == GuestVaPolicy::allowed
-                        ? ExactReserveStatus::invalid_arguments
-                        : ExactReserveStatus::policy_rejected;
+      policy == GuestVaPolicy::invalid) {
+    result.status = ExactReserveStatus::invalid_arguments;
+    return result;
+  }
+  if (policy != GuestVaPolicy::allowed) {
+    result.status = ExactReserveStatus::policy_rejected;
     return result;
   }
 
