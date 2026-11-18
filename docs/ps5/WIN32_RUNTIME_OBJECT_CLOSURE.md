@@ -1,6 +1,6 @@
 # Win32 x86recomp runtime → native PS5 object closure
 
-Status: **compiler/linker qualification only; no Warcraft game object or console execution**.
+Status: **55-object PS5 compiler/relocatable linker gate PASSED (run `44314705607`); no Warcraft game object or console execution**.
 
 ## Motivation
 
@@ -19,6 +19,8 @@ implementation, other runtime units and libc++/host services; this is not a
 claim that 286 independent reimplementations are needed.
 
 ## New closure gate
+
+The completed native object build reported **55 objects**, **28,663 defined-symbol lines** and **358 undefined-symbol lines**. These are LLVM `nm` listing counts, not independent missing implementations. Both LLVM object creation and `ld.lld-18 -r` succeeded.
 
 The dedicated script `scripts/ps5/compile-win32-runtime-closure.sh` consumes
 the actual, pinned compiler-census TSV. For all units with a PASS result, it:
