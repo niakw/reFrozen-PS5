@@ -33,6 +33,8 @@ class RuntimeGapReportTest(unittest.TestCase):
             }
             report = build_gap_report(census, root)
             self.assertEqual(report["reference_hle_count"], 2)
+            self.assertFalse(report["reference_surface"]["complete"])
+            self.assertEqual(report["reference_surface"]["mode"], "patch_delta_only")
             self.assertEqual(report["summary"], {
                 "ordinal_needs_manual": 1,
                 "reference_hle": 1,
