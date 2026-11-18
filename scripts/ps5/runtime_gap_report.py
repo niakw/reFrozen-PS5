@@ -165,6 +165,7 @@ def build_gap_report(
             "sha256": result.get("sha256"),
             "machine": result.get("machine"),
             "pe_bits": result.get("pe_bits"),
+            "version_resource": result.get("version_resource"),
             "target_runtime": target_runtime,
             "imports": imports_out,
             "capability_markers": result.get("com_guid_markers", []),
