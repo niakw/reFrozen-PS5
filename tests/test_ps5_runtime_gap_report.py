@@ -21,8 +21,8 @@ class RuntimeGapReportTest(unittest.TestCase):
                 "results": [{
                     "file": "synthetic.exe",
                     "sha256": "00" * 32,
-                    "machine": "x86_64",
-                    "pe_bits": 64,
+                    "machine": "x86",
+                    "pe_bits": 32,
                     "imports": [{
                         "dll": "KERNEL32.dll",
                         "dll_normalized": "kernel32.dll",
