@@ -4,6 +4,8 @@ on:
     paths:
       - 'scripts/ps5/compile-win64-runtime-census.sh'
       - 'scripts/ps5/patch_win64_runtime.py'
+      - 'scripts/ps5/patch_win64_rt_ps5.py'
+      - 'ps5/runtime/win64_memory_bridge_ps5.h'
       - '.github/workflows/ps5-win64-runtime-compile-census.yml'
   workflow_dispatch:
 permissions:
@@ -26,6 +28,8 @@ jobs:
           persist-credentials: false
       - name: Apply fail-closed PS5 portability edits
         run: python scripts/ps5/patch_win64_runtime.py build/nightsight/runtime
+      - name: Apply PS5 Win64 core memory edits
+        run: python scripts/ps5/patch_win64_rt_ps5.py build/nightsight/runtime
       - name: Download and verify Payload SDK
         run: |
           mkdir -p build/sdk-download build/sdk-root
@@ -42,10 +46,11 @@ jobs:
           while read -r unit status; do
             if [[ "$status" == FAIL ]]; then
               echo "--- $unit"
-              sed -n '1,12p' "build/runtime-census/logs/$unit.log"
+              grep -n -m 8 -E 'fatal error:| error:' "build/runtime-census/logs/$unit.log" || true
+              sed -n '1,16p' "build/runtime-census/logs/$unit.log"
             fi
           done < <(tail -n +2 build/runtime-census/results.tsv)
-          for unit in files.c handles.c input.c kernel32.c native.c pdh.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
+          for unit in files.c handles.c input.c kernel32.c native.c pdh.c rt.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
             grep -Eq "^${unit}[[:space:]]+PASS$" build/runtime-census/results.tsv
           done
       - name: Upload compiler evidence
