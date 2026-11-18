@@ -98,6 +98,18 @@ if(REFROZEN_PS5_COMPILE_ONLY)
                            -Wall -Wextra -Werror -Wpedantic -Wconversion)
   endif()
 
+  add_library(ps5_win64_frontend_shims_compile OBJECT
+              "../../ps5/runtime/ps5_win64_frontend_shims.cpp")
+  target_compile_features(ps5_win64_frontend_shims_compile PRIVATE cxx_std_20)
+  target_include_directories(ps5_win64_frontend_shims_compile PRIVATE
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/runtime")
+  if(MSVC)
+    target_compile_options(ps5_win64_frontend_shims_compile PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_win64_frontend_shims_compile PRIVATE
+                           -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+
   add_library(ps5_guest_memory_probe_compile OBJECT
               "../../ps5/runtime/guest_memory_probe_ps5.cpp")
   target_compile_features(ps5_guest_memory_probe_compile PRIVATE cxx_std_20)
@@ -170,6 +182,22 @@ if(NOT REFROZEN_PS5_COMPILE_ONLY)
     target_compile_options(ps5_audio_out_bridge_test PRIVATE -Wall -Wextra -Werror -Wpedantic)
   endif()
   add_test(NAME ps5_audio_out_bridge COMMAND ps5_audio_out_bridge_test)
+endif()
+
+if(NOT REFROZEN_PS5_COMPILE_ONLY)
+  add_executable(ps5_win64_frontend_shims_test
+    ps5_win64_frontend_shims_test.cpp
+    ../../ps5/runtime/ps5_win64_frontend_shims.cpp
+    ../../ps5/runtime/ps5_dinput_pad_bridge.cpp)
+  target_include_directories(ps5_win64_frontend_shims_test PRIVATE ../../ps5/runtime)
+  target_compile_features(ps5_win64_frontend_shims_test PRIVATE cxx_std_20)
+  if(MSVC)
+    target_compile_options(ps5_win64_frontend_shims_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_win64_frontend_shims_test PRIVATE
+      -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+  add_test(NAME ps5_win64_frontend_shims COMMAND ps5_win64_frontend_shims_test)
 endif()
 
 if(NOT REFROZEN_PS5_COMPILE_ONLY)
