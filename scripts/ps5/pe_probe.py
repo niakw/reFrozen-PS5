@@ -260,13 +260,18 @@ def inspect_pe(path: Path) -> dict:
     for index in range(count):
         entry = _slice(raw, section_table + index * 40, 40, "section table")
         name = entry[:8].split(b"\0", 1)[0].decode("ascii", "replace")
-        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from("<IIII", entry, 8)
+        (virtual_size, virtual_address, raw_size, raw_offset, _, _, _, _,
+         characteristics) = struct.unpack_from("<IIIIIIHHI", entry, 8)
         sections.append({
             "name": name,
             "virtual_size": virtual_size,
             "virtual_address": virtual_address,
             "raw_size": raw_size,
             "raw_offset": raw_offset,
+            "characteristics": characteristics,
+            "read": bool(characteristics & 0x40000000),
+            "write": bool(characteristics & 0x80000000),
+            "execute": bool(characteristics & 0x20000000),
         })
 
     imports = _parse_imports(raw, bits, optional, sections, size_of_headers)
@@ -280,9 +285,11 @@ def inspect_pe(path: Path) -> dict:
         "pe_bits": bits,
         "image_base": f"0x{image_base:x}",
         "image_size": image_size,
+        "size_of_headers": size_of_headers,
         "coff_timestamp": timestamp,
         "subsystem": subsystem,
         "sections": [section["name"] for section in sections],
+        "section_details": sections,
         "imports": imports,
         "exports": exports,
         "export_symbol_count": len(exports),
