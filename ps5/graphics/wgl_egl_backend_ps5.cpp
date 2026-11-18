@@ -125,10 +125,15 @@ BackendContext EglWglBackend::CreateContext(void* user, BackendContext share,
   std::lock_guard lock(self.impl_->mutex);
   if (!self.impl_->Open()) return 0;
 
-  const EGLContext shared =
-      share ? reinterpret_cast<EGLContext>(static_cast<std::uintptr_t>(share))
-            : EGL_NO_CONTEXT;
-  if (share && !self.impl_->contexts.contains(shared)) return 0;
+  EGLContext shared = EGL_NO_CONTEXT;
+  if (share) {
+    shared = reinterpret_cast<EGLContext>(static_cast<std::uintptr_t>(share));
+    if (!self.impl_->contexts.contains(shared)) return 0;
+  } else if (!self.impl_->contexts.empty()) {
+    // Match WGL's shared-object semantics used by the runtime: legacy
+    // wglCreateContext contexts participate in one backend share group.
+    shared = *self.impl_->contexts.begin();
+  }
 
   const bool core = (profile_mask & kWglContextCoreProfileBit) != 0 &&
                     (profile_mask & kWglContextCompatibilityProfileBit) == 0;
