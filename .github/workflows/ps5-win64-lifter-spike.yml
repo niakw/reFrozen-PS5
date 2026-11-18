@@ -4,6 +4,7 @@ on:
     paths:
       - 'scripts/ps5/synthetic_pe64.py'
       - 'tests/test_ps5_synthetic_pe64.py'
+      - 'tests/ps5/win64_lift_runtime_test.c'
       - '.github/workflows/ps5-win64-lifter-spike.yml'
   workflow_dispatch:
 permissions:
@@ -40,6 +41,10 @@ jobs:
         run: |
           clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated -c build/generated/code_0000.c -o build/generated/synthetic-lift.o
           test -s build/generated/synthetic-lift.o
+      - name: Execute translated Win64 function and verify CPU semantics
+        run: |
+          clang -std=gnu11 -O0 -Ibuild/nightsight/runtime -Ibuild/generated tests/ps5/win64_lift_runtime_test.c build/generated/synthetic-lift.o -o build/synthetic-lift-test
+          ./build/synthetic-lift-test
       - name: Preserve synthetic-lift evidence
         if: always()
         uses: actions/upload-artifact@v4
