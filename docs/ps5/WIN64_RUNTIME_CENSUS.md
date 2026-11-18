@@ -121,3 +121,27 @@ Remaining compiler blockers:
 CI evidence: runtime census run `44268238481` reports `passed=17 failed=6` and explicitly requires `display.c` and `user32.c` to PASS.
 
 This is compiler coverage, not runtime/device qualification. The display implementation exposes optional weak PS5 hooks so real scanout state can be connected after the registered WGL/EGL graphics probe is qualified.
+
+
+## DirectInput portability increment
+
+The DirectInput unit now compiles for the PS5 ABI after replacing only its host-facing macOS pieces:
+
+- CoreGraphics/AppKit capture calls are removed;
+- monotonic event timestamps use POSIX `CLOCK_MONOTONIC`;
+- exclusive mouse capture is delegated through optional weak hook `rt_ps5_mouse_capture(int)`;
+- keyboard/mouse state, buffered DirectInput events and COM vtables remain unchanged.
+
+CI runtime census run `44268611168` reports **18 PASS / 5 FAIL**, with `dinput.c PASS`.
+
+Remaining failures are now limited to:
+
+```text
+bcrypt.c
+steam.c
+vulkan.c
+wasapi.c
+xaudio2.c
+```
+
+For the selected Warcraft Classic OpenGL path, `steam.c` and `vulkan.c` are not first-launch requirements. Audio is the next platform runtime priority; `bcrypt.c` should be driven by the exact private import census rather than implemented speculatively.
