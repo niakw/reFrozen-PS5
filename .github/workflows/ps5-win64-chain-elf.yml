@@ -97,8 +97,9 @@ jobs:
             echo "Unexpected host/atomic runtime dependency" >&2
             exit 1
           fi
-          if strings "$ELF" | grep -qE '/home/runner/work/|Warcraft|Blizzard'; then
+          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > build/ps5-win64-chain/forbidden-strings.txt; then
             echo "Unexpected build path or proprietary-game marker in synthetic ELF" >&2
+            cat build/ps5-win64-chain/forbidden-strings.txt >&2
             exit 1
           fi
           cat build/ps5-win64-chain/SHA256SUMS
