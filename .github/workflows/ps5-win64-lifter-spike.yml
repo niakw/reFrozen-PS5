@@ -1,0 +1,49 @@
+name: PS5 Win64 recompiler experiment (synthetic only)
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/synthetic_pe64.py'
+      - 'tests/test_ps5_synthetic_pe64.py'
+      - '.github/workflows/ps5-win64-lifter-spike.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  night-sight-win64-lift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Checkout pinned MIT-licensed Win64 lifter
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Install Python lifter dependencies
+        run: python -m pip install --disable-pip-version-check capstone==5.0.6 lief==0.16.6
+      - name: Generate minimal Win64 test PE
+        run: |
+          python -m unittest discover -s tests -p 'test_ps5_synthetic_pe64.py' -v
+          python scripts/ps5/synthetic_pe64.py build/synthetic_win64.exe
+      - name: Translate Win64 synthetic executable
+        run: |
+          python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_win64.exe","build/generated"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation.log
+          cat build/translation.log
+          test -s build/generated/code_0000.c
+          grep -q "void F_140001000" build/generated/code_0000.c
+          grep -q "UNSUPPORTED: {}" build/translation.log
+      - name: Compile translated synthetic code on x86-64 host
+        run: |
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated -c build/generated/code_0000.c -o build/generated/synthetic-lift.o
+          test -s build/generated/synthetic-lift.o
+      - name: Preserve synthetic-lift evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-lifter-synthetic-proof
+          path: build/translation.log
+          if-no-files-found: ignore
