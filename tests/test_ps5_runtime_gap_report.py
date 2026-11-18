@@ -144,6 +144,38 @@ class RuntimeGapReportTest(unittest.TestCase):
             self.assertEqual(report["summary"],
                              {"local_module": 1, "local_module_ordinal": 1})
 
+    def test_capability_markers_are_carried_without_local_paths(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "patches" / "x86recomp").mkdir(parents=True)
+            census = {
+                "results": [{
+                    "file": "classic64.exe",
+                    "sha256": "12" * 32,
+                    "machine": "x86_64",
+                    "pe_bits": 64,
+                    "imports": [{
+                        "dll": "bcrypt.dll",
+                        "dll_normalized": "bcrypt.dll",
+                        "runtime_area": "crypto",
+                        "symbols": ["BCryptGenRandom"],
+                    }],
+                    "com_guid_markers": [{
+                        "name": "xaudio2_27",
+                        "area": "audio",
+                        "guid": "5A508685-A254-4FBA-9B82-9A24B00306AF",
+                        "count": 1,
+                        "sections": [".rdata"],
+                    }],
+                }]
+            }
+            report = build_gap_report(census, root)
+            module = report["modules"][0]
+            self.assertEqual(report["schema"], 3)
+            self.assertEqual(module["imports"][0]["runtime_area"], "crypto")
+            self.assertEqual(module["capability_markers"][0]["name"], "xaudio2_27")
+            self.assertNotIn(str(Path(temp)), str(report))
+
     def test_hle_regex_ignores_non_handlers(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
