@@ -98,12 +98,15 @@ def plan_module(module: dict, granule: int = DEFAULT_GRANULE) -> dict:
 
     segments = []
     for page in planned:
-        key = (page["host_protection"], page["coarse_write_broadening"],
-               bool(page["guest_execute_sources"]))
+        key = (page["host_protection"], page["coarse_write_broadening"])
         if segments and segments[-1]["_key"] == key and \
                 segments[-1]["end"] == page["address"]:
             segments[-1]["end"] += granule
             segments[-1]["granules"] += 1
+            segments[-1]["contains_guest_executable_bytes"] = (
+                segments[-1]["contains_guest_executable_bytes"] or
+                bool(page["guest_execute_sources"])
+            )
         else:
             segments.append({
                 "_key": key,
