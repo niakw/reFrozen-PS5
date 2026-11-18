@@ -29,12 +29,18 @@ A PS5-native **static recompilation**, not Wine, of the user's own Warcraft III:
 ## First acceptance gates
 - [x] Fork is at the exact upstream head at project initialization.
 - [x] Branch-specific read-only portability inventory, no game files.
-- [ ] Inventory CI green, output audited (regex matches are triage hints).
-- [ ] Review PS5 SDK/runtime interfaces and Encore's reusable *platform* components by file and license.
-- [ ] Add platform-neutral guest address-space and Win32 API contract tests.
-- [ ] Compile a **small generated-code fixture** for native host x86-64, without original game data.
+- [x] Inventory CI green on the research PR; regex results are triage hints, not a runtime audit.
+- [x] Initial source-level Encore reuse candidate list (`ENCORE_REUSE.md`); SDK integration and license checks remain open.
+- [x] Add platform-neutral 32-bit guest image-range bounds/overlap tests; compiled on Linux/macOS.
+- [ ] Integrate the checks into the actual x86recomp memory manager and add Win32 API conformance tests.
+- [x] Compile a synthetic C++20 host fixture on Linux and macOS with strict warnings.
+- [ ] Compile **actual lifter-generated code** from a synthetic PE fixture on native x86-64, without original game data.
 - [ ] Compile that fixture with the confirmed PS5 toolchain and inspect ELF/imports.
 - [ ] Only then attempt the full game with user-owned files and console testing.
+
+## Local user-owned binary architecture probe
+
+Run `python3 scripts/ps5/pe_probe.py /path/to/war3.exe /path/to/Game.dll` locally when files become available. The script outputs PE machine, PE32/PE32+, image base, sections, SHA-256 and file basename; it does **not** read CD keys, execute code, upload files, or infer a Warcraft patch version without a validated hash catalog. CI uses only synthetic PE fixtures. Logs should not include full local install paths.
 
 ## Critical blockers / unknowns
 - Exact PS5 homebrew SDK capabilities for the user's firmware and installed loader.
