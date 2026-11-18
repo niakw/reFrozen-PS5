@@ -278,7 +278,7 @@ done:
         fiber,
         "__attribute__((naked)) static void swap_ctx",
         "static __thread Fiber *cur_fiber;",
-        """__attribute__((naked)) static void swap_ctx(uint64_t *save_sp, uint64_t new_sp) {
+        r"""__attribute__((naked)) static void swap_ctx(uint64_t *save_sp, uint64_t new_sp) {
     __asm__ volatile(
         "pushq %rbx\n"
         "pushq %rbp\n"
