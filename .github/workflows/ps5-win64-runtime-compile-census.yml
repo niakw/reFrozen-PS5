@@ -9,6 +9,9 @@ on:
       - 'scripts/ps5/patch_win64_boot_ps5.py'
       - 'ps5/runtime/win64_memory_bridge_ps5.h'
       - 'ps5/runtime/ps5_audio_out_bridge.*'
+      - 'ps5/runtime/ps5_dinput_pad_bridge.*'
+      - 'ps5/runtime/ps5_win64_frontend_shims.cpp'
+      - 'ps5/runtime/ps5_pad_contract.hpp'
       - 'ps5/runtime/commoncrypto_openssl_compat.h'
       - 'tests/ps5/commoncrypto_openssl_compat_test.c'
       - 'tests/ps5/x86_64_fiber_swap_test.c'
@@ -100,15 +103,20 @@ jobs:
           bash -n scripts/ps5/compile-win64-first-launch-runtime.sh
           bash scripts/ps5/compile-win64-first-launch-runtime.sh \
             build/nightsight/runtime build/runtime-first-launch
-          grep -q 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=22 aggregate=1 excluded=steam.c,vulkan.c' \
+          grep -q 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=28 frontend=2 memory=4 aggregate=1 excluded=steam.c,vulkan.c' \
             build/runtime-first-launch/receipt.txt
-          test "$(wc -l < build/runtime-first-launch/objects.list | tr -d ' ')" -eq 22
+          test "$(wc -l < build/runtime-first-launch/objects.list | tr -d ' ')" -eq 28
           test -s build/runtime-first-launch/first-launch-runtime.o
           file build/runtime-first-launch/first-launch-runtime.o
           nm -u build/runtime-first-launch/first-launch-runtime.o | sort -u > build/runtime-first-launch/undefined-symbols.txt
           nm build/runtime-first-launch/first-launch-runtime.o > build/runtime-first-launch/symbols.txt
           echo "== unresolved aggregate symbols =="
           cat build/runtime-first-launch/undefined-symbols.txt
+          if grep -Eq ' U (cocoa_|gamepad_|rt_last_surface_hwnd$|rt_request_screenshot$|rt_vk_(skip_next|snapshot_request)$|refrozen_ps5_(map|release)_guest_rw$)' \
+              build/runtime-first-launch/undefined-symbols.txt; then
+            echo "frontend/memory bridge symbols still leak into first-launch runtime" >&2
+            exit 1
+          fi
       - name: Upload compiler evidence
         uses: actions/upload-artifact@v4
         with:
