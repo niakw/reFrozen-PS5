@@ -1,0 +1,68 @@
+name: PS5 Win32 SDL3 native contract census
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/x86recomp_sdl_contract.py'
+      - 'tests/test_ps5_x86recomp_sdl_contract.py'
+      - 'scripts/ps5/patch_x86recomp_runtime_ps5.py'
+      - 'patches/x86recomp/**'
+      - '.github/workflows/ps5-win32-sdl-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sdl-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate classifier
+        run: python -m unittest tests.test_ps5_x86recomp_sdl_contract -v
+      - name: Materialize exact patched x86recomp runtime
+        run: |
+          git clone --filter=blob:none https://github.com/JTM-rootstorm/x86recomp.git build/x86recomp
+          cd build/x86recomp
+          git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
+          for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do
+            git apply "$patch"
+          done
+          cd "$GITHUB_WORKSPACE"
+          python3 -B scripts/ps5/patch_x86recomp_runtime_ps5.py build/x86recomp
+      - name: Map SDL3 calls to runtime owners
+        run: |
+          python3 -B scripts/ps5/x86recomp_sdl_contract.py             build/x86recomp/src/runtime             --output build/ps5-sdl-contract.json | tee build/ps5-sdl-contract.txt
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('build/ps5-sdl-contract.json').read_text())
+          print('baseline unresolved:', r['expected_unresolved_count'])
+          print('source seen:', r['expected_unresolved_seen_in_source'])
+          print('all runtime calls:', r['runtime_sdl_call_count'])
+          print('extra calls:', r['additional_sdl_calls_not_in_55_object_unresolved_baseline'])
+          for name,g in r['groups'].items():
+              print(f"{name}: symbols={len(g['symbols'])} seen={len(g['seen'])} files={g['files']}")
+          PY
+      - name: Trace SDL_GPU ownership and CreateGpuDevice callers
+        run: |
+          {
+            echo '=== CreateGpuDevice references ==='
+            grep -RIn -E 'CreateGpuDevice|SDL_CreateGPUDevice|SDL_GPU' build/x86recomp/src/runtime || true
+          } | tee build/ps5-sdl-gpu-route.txt
+          grep -q 'gfx/gpu_device.cpp' build/ps5-sdl-gpu-route.txt
+          grep -q 'CreateGpuDevice' build/ps5-sdl-gpu-route.txt
+
+      - name: Upload text/JSON contract only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-sdl-native-contract
+          path: |
+            build/ps5-sdl-contract.json
+            build/ps5-sdl-contract.txt
+            build/ps5-sdl-gpu-route.txt
+          if-no-files-found: error
+          retention-days: 7
