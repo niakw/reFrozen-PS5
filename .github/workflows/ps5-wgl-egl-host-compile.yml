@@ -24,8 +24,10 @@ jobs:
         run: |
           cmake -S tests/ps5 -B build/wgl-egl             -DCMAKE_BUILD_TYPE=Debug             -DREFROZEN_EGL_BACKEND_CHECK=ON
       - name: Build WGL contract and EGL backend with strict warnings
-        run: cmake --build build/wgl-egl --target wgl_platform_contract_test wgl_egl_backend_compile --parallel 2
+        run: cmake --build build/wgl-egl --target wgl_platform_contract_test wgl_egl_backend_compile wgl_egl_backend_mock_test --parallel 2
       - name: Run host WGL contract
         run: |
           ./build/wgl-egl/wgl_platform_contract_test | tee build/wgl-contract.log
           grep -q 'wgl_platform_contract: PASS' build/wgl-contract.log
+          ./build/wgl-egl/wgl_egl_backend_mock_test | tee build/wgl-egl-mock.log
+          grep -q 'wgl_egl_backend_mock: PASS intervals=1,0,0,1,1' build/wgl-egl-mock.log
