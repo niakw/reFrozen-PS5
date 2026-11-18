@@ -28,7 +28,7 @@ index 00a4af8..0000000 100644
  #include <algorithm>
  #include <atomic>
  #include <chrono>
-@@ -313,7 +317,11 @@ void FatalReport(const char* message) {
+@@ -313,4 +317,8 @@ void FatalReport(const char* message) {
    char name[64] = {};
 -  pthread_getname_np(pthread_self(), name, sizeof name);
 +#if defined(__linux__) || defined(__APPLE__)
@@ -69,7 +69,7 @@ index 77d5a11..0000000 100644
  #include <fcntl.h>
  #include <pthread.h>
  #include <signal.h>
-@@ -75,9 +80,13 @@ void OnDumpSignal(int) {
+@@ -75,8 +80,12 @@ void OnDumpSignal(int) {
        WriteAll(fd, buf);
      }
 +#if RECOMP_HAVE_EXECINFO
