@@ -22,8 +22,9 @@ cmake -S "$ROOT/tests/ps5" -B "$BUILD" \
   -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
 cmake --build "$BUILD" --target \
   guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile \
-  pe_image_materializer_compile ps5_exact_reservation_adapter_compile --parallel 2
-for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_materializer; do
+  pe_image_materializer_compile direct_guest_backing_compile \
+  ps5_exact_reservation_adapter_compile ps5_direct_guest_backing_adapter_compile --parallel 2
+for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_materializer direct_guest_backing; do
   object="$BUILD/CMakeFiles/${name}_compile.dir/${name}_test.cpp.o"
   if [[ ! -s "$object" ]]; then
     echo "Missing PS5 compile-only object: $object" >&2
@@ -36,15 +37,17 @@ for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_mater
     exit 1
   fi
 done
-adapter_object="$(find "$BUILD/CMakeFiles/ps5_exact_reservation_adapter_compile.dir" -type f -name '*.o' -print -quit)"
-if [[ -z "$adapter_object" || ! -s "$adapter_object" ]]; then
-  echo "Missing PS5 exact-reservation adapter object" >&2
-  exit 1
-fi
-llvm-readobj-18 --file-headers "$adapter_object" > "$BUILD/exact-reservation-adapter-object-header.txt"
-if ! grep -Eq 'Arch: x86_64|Machine: EM_X86_64' "$BUILD/exact-reservation-adapter-object-header.txt"; then
-  cat "$BUILD/exact-reservation-adapter-object-header.txt" >&2
-  echo "PS5 adapter object is not x86-64" >&2
-  exit 1
-fi
-echo "PS5-target guest layout/reservation objects compiled; NOT a linked PS5 executable."
+for target in ps5_exact_reservation_adapter ps5_direct_guest_backing_adapter; do
+  adapter_object="$(find "$BUILD/CMakeFiles/${target}_compile.dir" -type f -name '*.o' -print -quit)"
+  if [[ -z "$adapter_object" || ! -s "$adapter_object" ]]; then
+    echo "Missing PS5 adapter object: $target" >&2
+    exit 1
+  fi
+  llvm-readobj-18 --file-headers "$adapter_object" > "$BUILD/${target}-object-header.txt"
+  if ! grep -Eq 'Arch: x86_64|Machine: EM_X86_64' "$BUILD/${target}-object-header.txt"; then
+    cat "$BUILD/${target}-object-header.txt" >&2
+    echo "PS5 adapter object is not x86-64: $target" >&2
+    exit 1
+  fi
+done
+echo "PS5-target guest layout/reservation/backing objects compiled; NOT a linked PS5 executable."
