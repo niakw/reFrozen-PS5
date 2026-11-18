@@ -17,6 +17,7 @@ MAX_PE_OFFSET = 1024 * 1024
 MAX_SECTIONS = 96
 MAX_IMPORT_DESCRIPTORS = 4096
 MAX_IMPORTS_PER_DLL = 100_000
+MAX_EXPORTS = 100_000
 MAX_STRING = 4096
 _MACHINE = {0x014C: "x86", 0x8664: "x86_64", 0xAA64: "arm64"}
 
@@ -97,6 +98,71 @@ def _rva_to_offset(rva: int, sections: list[dict], size_of_headers: int, raw_siz
                 raise PEFormatError("RVA maps outside file")
             return offset
     raise PEFormatError(f"unmapped RVA 0x{rva:x}")
+
+
+def _parse_exports(raw: bytes, bits: int, optional: bytes, sections: list[dict],
+                   size_of_headers: int) -> list[dict]:
+    dir_count_off = 92 if bits == 32 else 108
+    dir_base = 96 if bits == 32 else 112
+    if len(optional) < dir_count_off + 4:
+        return []
+    count = struct.unpack_from("<I", optional, dir_count_off)[0]
+    if count == 0 or len(optional) < dir_base + 8:
+        return []
+    export_rva, export_size = struct.unpack_from("<II", optional, dir_base)
+    if not export_rva or not export_size:
+        return []
+    directory_offset = _rva_to_offset(export_rva, sections, size_of_headers, len(raw))
+    directory = _slice(raw, directory_offset, 40, "export directory")
+    (_, _, _, _, name_rva, ordinal_base, function_count, name_count,
+     functions_rva, names_rva, ordinals_rva) = struct.unpack("<IIHHIIIIIII", directory)
+    if function_count > MAX_EXPORTS or name_count > MAX_EXPORTS:
+        raise PEFormatError("too many exports")
+    if function_count == 0:
+        return []
+    functions_offset = _rva_to_offset(functions_rva, sections, size_of_headers, len(raw))
+    functions = struct.unpack(
+        f"<{function_count}I",
+        _slice(raw, functions_offset, function_count * 4, "export address table"),
+    )
+    names_by_index: dict[int, str] = {}
+    if name_count:
+        names_offset = _rva_to_offset(names_rva, sections, size_of_headers, len(raw))
+        ordinals_offset = _rva_to_offset(ordinals_rva, sections, size_of_headers, len(raw))
+        name_rvas = struct.unpack(
+            f"<{name_count}I",
+            _slice(raw, names_offset, name_count * 4, "export name pointers"),
+        )
+        ordinals = struct.unpack(
+            f"<{name_count}H",
+            _slice(raw, ordinals_offset, name_count * 2, "export ordinals"),
+        )
+        for name_ptr, index in zip(name_rvas, ordinals):
+            if index >= function_count:
+                raise PEFormatError("export name ordinal outside function table")
+            names_by_index[index] = _cstring(
+                raw, _rva_to_offset(name_ptr, sections, size_of_headers, len(raw)),
+                "export symbol",
+            )
+    exports = []
+    export_end = export_rva + export_size
+    for index, function_rva in enumerate(functions):
+        if function_rva == 0:
+            continue
+        ordinal = ordinal_base + index
+        forwarder = None
+        if export_rva <= function_rva < export_end:
+            forwarder = _cstring(
+                raw, _rva_to_offset(function_rva, sections, size_of_headers, len(raw)),
+                "export forwarder",
+            )
+        exports.append({
+            "name": names_by_index.get(index),
+            "ordinal": ordinal,
+            "rva": f"0x{function_rva:x}",
+            "forwarder": forwarder,
+        })
+    return exports
 
 
 def _parse_imports(raw: bytes, bits: int, optional: bytes, sections: list[dict],
@@ -204,6 +270,7 @@ def inspect_pe(path: Path) -> dict:
         })
 
     imports = _parse_imports(raw, bits, optional, sections, size_of_headers)
+    exports = _parse_exports(raw, bits, optional, sections, size_of_headers)
     h = hashlib.sha256(raw).hexdigest()
     return {
         "file": path.name,
@@ -217,6 +284,8 @@ def inspect_pe(path: Path) -> dict:
         "subsystem": subsystem,
         "sections": [section["name"] for section in sections],
         "imports": imports,
+        "exports": exports,
+        "export_symbol_count": len(exports),
         "import_dll_count": len(imports),
         "import_symbol_count": sum(item["count"] for item in imports),
         "warcraft_version": None,
