@@ -34,7 +34,7 @@ while IFS=$'\t' read -r relative state _; do
   object="$OUT/objects/$label.o"
   log="$OUT/logs/$label.log"
   if "$CXX" -std=c++20 -O0 -g0 -fPIC \
-       -I"$ROOT/build/x86recomp/src" -I"$SDL" \
+       -I"$ROOT/build/x86recomp/src" -I"$ROOT/ps5/runtime" -I"$SDL" \
        -c "$RUNTIME/$relative" -o "$object" >"$log" 2>&1 && [[ -s "$object" ]]; then
     printf '%s\tPASS\n' "$relative" >> "$OUT/object-results.tsv"
     objects+=("$object")
