@@ -100,9 +100,19 @@ for src in ps5_dinput_pad_bridge.cpp ps5_win64_frontend_shims.cpp; do
   printf '%s\n' "$OUT/objects/${src%.cpp}.o" >> "$OUT/objects.list"
 done
 
+# Native PS5 exact-address Win64 guest-memory implementation.
+for src in exact_reservation_ps5.cpp direct_guest_backing_ps5.cpp \
+           guest_image_mapping_ps5.cpp win64_memory_bridge_ps5.cpp; do
+  "$CXX" -std=c++20 -O2 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+    -I"$ROOT/ps5/host" -I"$ROOT/ps5/runtime" \
+    -c "$ROOT/ps5/runtime/$src" \
+    -o "$OUT/objects/${src%.cpp}.o"
+  printf '%s\n' "$OUT/objects/${src%.cpp}.o" >> "$OUT/objects.list"
+done
+
 count=$(wc -l < "$OUT/objects.list" | tr -d ' ')
-if [[ "$count" -ne 24 ]]; then
-  echo "unexpected first-launch object count: $count (expected 24)" >&2
+if [[ "$count" -ne 28 ]]; then
+  echo "unexpected first-launch object count: $count (expected 28)" >&2
   exit 1
 fi
 
@@ -117,6 +127,6 @@ fi
 "$LLD" -r "${OBJECTS[@]}" -o "$OUT/first-launch-runtime.o"
 test -s "$OUT/first-launch-runtime.o"
 
-printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s frontend=2 aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
+printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s frontend=2 memory=4 aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
   | tee "$OUT/receipt.txt"
 printf '%s\n' "$OUT/objects.list"
