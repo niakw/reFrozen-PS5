@@ -15,10 +15,20 @@ import re
 HLE_RE = re.compile(r'HLE\("([^"]+)",\s*([A-Za-z_][A-Za-z0-9_]*),\s*\d+\)')
 
 
+def _reference_hle_files(root: Path) -> tuple[list[Path], bool]:
+    files = list(sorted((root / "patches" / "x86recomp").glob("*.patch")))
+    runtime = root / "tools" / "x86recomp" / "src" / "runtime"
+    complete = runtime.is_dir()
+    if complete:
+        for suffix in ("*.c", "*.cc", "*.cpp", "*.h", "*.hpp"):
+            files.extend(sorted(runtime.rglob(suffix)))
+    return files, complete
+
+
 def reference_hle_surface(root: Path) -> set[tuple[str, str]]:
     surface: set[tuple[str, str]] = set()
-    patch_root = root / "patches" / "x86recomp"
-    for path in sorted(patch_root.glob("*.patch")):
+    files, _ = _reference_hle_files(root)
+    for path in files:
         text = path.read_text(encoding="utf-8", errors="replace")
         for dll, api in HLE_RE.findall(text):
             surface.add((dll.lower(), api))
@@ -27,6 +37,7 @@ def reference_hle_surface(root: Path) -> set[tuple[str, str]]:
 
 def build_gap_report(census: dict, root: Path) -> dict:
     known = reference_hle_surface(root)
+    _, reference_complete = _reference_hle_files(root)
     local_modules = {
         result["file"].lower(): result
         for result in census.get("results", [])
@@ -101,6 +112,15 @@ def build_gap_report(census: dict, root: Path) -> dict:
             "ps5_status": "always unverified until compiled and exercised on the PS5 runtime",
         },
         "reference_hle_count": len(known),
+        "reference_surface": {
+            "mode": "full_local_x86recomp_checkout_plus_patches" if reference_complete else "patch_delta_only",
+            "complete": reference_complete,
+            "note": (
+                "tools/x86recomp is present; handlers are scanned from the patched runtime checkout"
+                if reference_complete else
+                "tools/x86recomp is absent; only reFrozen patch additions/changes are visible, so unmapped is provisional"
+            ),
+        },
         "summary": dict(sorted(totals.items())),
         "missing_by_dll": {dll: sorted(set(names)) for dll, names in sorted(missing_by_dll.items())},
         "modules": modules,
