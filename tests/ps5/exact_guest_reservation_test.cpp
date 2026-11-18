@@ -126,5 +126,26 @@ int main() {
     assert(r.status == ExactReserveStatus::invalid_arguments);
   }
 
+  {
+    Mock mock;
+    const auto r = ReserveExactGuestRange(
+        base, size + 1, kPs5KernelGranule,
+        [&](void** a, std::size_t n, int f, std::size_t al) {
+          return mock.reserve(a, n, f, al);
+        },
+        [&](void* a, std::size_t n) { return mock.release(a, n); });
+    assert(r.status == ExactReserveStatus::invalid_arguments);
+  }
+  {
+    Mock mock;
+    const auto r = ReserveExactGuestRange(
+        UINT64_MAX - 0x1000ULL, 0x4000ULL, kPs5KernelGranule,
+        [&](void** a, std::size_t n, int f, std::size_t al) {
+          return mock.reserve(a, n, f, al);
+        },
+        [&](void* a, std::size_t n) { return mock.release(a, n); });
+    assert(r.status == ExactReserveStatus::invalid_arguments);
+  }
+
   std::cout << "exact_guest_reservation: PASS\n";
 }
