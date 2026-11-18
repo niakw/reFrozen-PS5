@@ -29,8 +29,9 @@ constexpr std::uint32_t kScanLeft = 0x4b;
 
 float Axis(std::uint8_t raw) {
   const float value =
-      raw < 128 ? (static_cast<int>(raw) - 128) / 128.0f
-                : (static_cast<int>(raw) - 128) / 127.0f;
+      raw < 128
+          ? static_cast<float>(static_cast<int>(raw) - 128) / 128.0f
+          : static_cast<float>(static_cast<int>(raw) - 128) / 127.0f;
   const float magnitude = std::fabs(value);
   if (magnitude <= kDeadzone) return 0.0f;
   const float scaled = (magnitude - kDeadzone) / (1.0f - kDeadzone);
