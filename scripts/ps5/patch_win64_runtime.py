@@ -24,6 +24,25 @@ def replace_once(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
 
+def replace_between_once(
+    path: Path, start: str, end: str, replacement: str
+) -> None:
+    text = path.read_text(encoding="utf-8")
+    if text.count(start) != 1 or text.count(end) != 1:
+        raise PatchError(
+            f"{path.name}: expected unique block markers "
+            f"{start!r} / {end!r}"
+        )
+    begin = text.index(start)
+    finish = text.index(end, begin)
+    if finish <= begin:
+        raise PatchError(f"{path.name}: invalid block marker order")
+    path.write_text(
+        text[:begin] + replacement + text[finish:],
+        encoding="utf-8",
+    )
+
+
 def patch_runtime(runtime: Path) -> None:
     runtime = runtime.resolve()
     if not runtime.is_dir():
@@ -255,25 +274,10 @@ done:
         """// Win32 fibers on x86-64 PS5. A fiber owns a native stack (for the nested C frames of translated code)
 """,
     )
-    replace_once(
+    replace_between_once(
         fiber,
-        """__attribute__((naked)) static void swap_ctx(uint64_t *save_sp, uint64_t new_sp) {
-    __asm__ volatile(
-        "sub sp, sp, #176\n"
-        "stp x19, x20, [sp, #0]\n"  "stp x21, x22, [sp, #16]\n" "stp x23, x24, [sp, #32]\n"
-        "stp x25, x26, [sp, #48]\n" "stp x27, x28, [sp, #64]\n" "stp x29, x30, [sp, #80]\n"
-        "stp d8, d9, [sp, #96]\n"   "stp d10, d11, [sp, #112]\n" "stp d12, d13, [sp, #128]\n"
-        "stp d14, d15, [sp, #144]\n"
-        "mov x9, sp\n" "str x9, [x0]\n"
-        "mov sp, x1\n"
-        "ldp x19, x20, [sp, #0]\n"  "ldp x21, x22, [sp, #16]\n" "ldp x23, x24, [sp, #32]\n"
-        "ldp x25, x26, [sp, #48]\n" "ldp x27, x28, [sp, #64]\n" "ldp x29, x30, [sp, #80]\n"
-        "ldp d8, d9, [sp, #96]\n"   "ldp d10, d11, [sp, #112]\n" "ldp d12, d13, [sp, #128]\n"
-        "ldp d14, d15, [sp, #144]\n"
-        "add sp, sp, #176\n"
-        "ret\n");
-}
-""",
+        "__attribute__((naked)) static void swap_ctx",
+        "static __thread Fiber *cur_fiber;",
         """__attribute__((naked)) static void swap_ctx(uint64_t *save_sp, uint64_t new_sp) {
     __asm__ volatile(
         "pushq %rbx\n"
@@ -292,17 +296,13 @@ done:
         "popq %rbx\n"
         "retq\n");
 }
+
 """,
     )
-    replace_once(
+    replace_between_once(
         fiber,
-        """    // initial native frame: swap_ctx "returns" into fiber_entry
-    uint64_t sp = (G(f->host_stack) + f->host_size - 176) & ~0xFull;
-    memset(PTR(sp), 0, 176);
-    wr64(sp + 88, G(fiber_entry));   // x30 (return address)
-    wr64(sp + 80, 0);                // x29
-    f->host_sp = sp;
-""",
+        '    // initial native frame: swap_ctx "returns" into fiber_entry\n',
+        "    f->host_sp = sp;\n",
         """    // Initial SysV x86-64 frame for swap_ctx:
     // r15,r14,r13,r12,rbp,rbx,return-address. After six pops + ret,
     // fiber_entry starts with the ABI-required rsp % 16 == 8.
@@ -310,10 +310,8 @@ done:
     uint64_t sp = (top - 56) & ~0xFull;
     memset(PTR(sp), 0, 56);
     wr64(sp + 48, G(fiber_entry));
-    f->host_sp = sp;
 """,
     )
-
 
 
 def main() -> int:
