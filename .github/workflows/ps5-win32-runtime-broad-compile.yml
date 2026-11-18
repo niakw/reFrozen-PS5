@@ -9,6 +9,10 @@ on:
       - 'scripts/ps5/patch_x86recomp_runtime_ps5.py'
       - 'tests/test_ps5_x86recomp_timing_patch.py'
       - 'tests/test_ps5_win32_import_map.py'
+      - 'ps5/runtime/ps5_audio_out_bridge.*'
+      - 'ps5/runtime/ps5_stereo_resampler.*'
+      - 'ps5/runtime/ps5_win32_audio_driver.*'
+      - 'tests/ps5/ps5_stereo_resampler_test.cpp'
       - '.github/workflows/ps5-win32-runtime-broad-compile.yml'
   workflow_dispatch:
 permissions:
@@ -68,7 +72,7 @@ jobs:
             key="$(printf '%s' "$rel" | tr '/ ' '__')"
             log="$OUT/logs/$key.log"
             set +e
-            "$CC" -std=c++20 -O0 -g0 -fsyntax-only               -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$SDL"               "$src" >"$log" 2>&1
+            "$CC" -std=c++20 -O0 -g0 -fsyntax-only               -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$GITHUB_WORKSPACE/ps5/runtime" -I"$SDL"               "$src" >"$log" 2>&1
             rc=$?
             set -e
             if [ "$rc" -eq 0 ]; then
@@ -132,7 +136,7 @@ jobs:
           for unit in "${units[@]}"; do
             object="$OUT/$(printf '%s' "$unit" | tr '/' '_').o"
             "$CC" -std=c++20 -O0 -g0 -fPIC \
-              -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$SDL" \
+              -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$GITHUB_WORKSPACE/ps5/runtime" -I"$SDL" \
               -c "$RUNTIME/$unit" -o "$object"
             test -s "$object"
             objs+=("$object")
@@ -187,12 +191,12 @@ jobs:
           found=forbidden.intersection(d["sdl_symbols"])
           if found:
               raise SystemExit(f"SDL timing symbols still unresolved: {sorted(found)}")
-          if d["unique_sdl_symbols"] != 59:
+          if d["unique_sdl_symbols"] > 59:
               raise SystemExit(
-                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 59"
+                  f"SDL dependency surface regressed: {d['unique_sdl_symbols']} > 59"
               )
           print("REFROZEN_PS5_SDL_TIMING_REMOVED pass=1 symbols=SDL_GetTicks,SDL_GetTicksNS")
-          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=59")
+          print(f"REFROZEN_PS5_SDL_SURFACE measured_unique_sdl={d['unique_sdl_symbols']}")
           PY
       - name: Record patched public SDL call sites for adapter design
         run: |
