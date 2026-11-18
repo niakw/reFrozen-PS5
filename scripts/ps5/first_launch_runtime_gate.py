@@ -36,7 +36,7 @@ _DLL_REQUIREMENTS = {
     "ws2_32.dll": {"sockets.c"},
     "mswsock.dll": {"sockets.c"},
     "winmm.dll": {"system.c"},
-    "ole32.dll": {"input.c", "wasapi.c", "xaudio2.c"},
+    "ole32.dll": {"input.c"},
     "opengl32.dll": {"@wgl_egl"},
     "bcrypt.dll": {"bcrypt.c"},
 }
