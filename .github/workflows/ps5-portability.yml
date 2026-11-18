@@ -2,19 +2,21 @@ name: PS5 portability inventory
 on:
   pull_request:
     paths:
+      - 'ps5/**'
       - 'src/**'
       - 'scripts/**'
+      - 'tests/ps5/**'
       - 'tests/test_ps5_portability_inventory.py'
       - 'patches/**'
       - 'config/**'
       - 'CMakeLists.txt'
       - '.github/workflows/ps5-portability.yml'
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   inventory:
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -30,3 +32,18 @@ jobs:
           name: ps5-portability-inventory
           path: build/ps5-portability.json
           if-no-files-found: error
+  host-guest32:
+    name: host guest32 / ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure C++20 fixture
+        run: cmake -S tests/ps5 -B build/ps5-host -DCMAKE_BUILD_TYPE=Debug
+      - name: Build with strict warnings
+        run: cmake --build build/ps5-host --parallel 2
+      - name: Test bounds and overlap semantics
+        run: ctest --test-dir build/ps5-host --output-on-failure
