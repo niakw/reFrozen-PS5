@@ -23,13 +23,17 @@ struct EglWglBackend::Impl {
 
   bool Open() {
     if (ready) return true;
+    auto fail = [this]() {
+      Close();
+      return false;
+    };
     display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (display == EGL_NO_DISPLAY) return false;
 
     EGLint major = 0;
     EGLint minor = 0;
-    if (!eglInitialize(display, &major, &minor)) return false;
-    if (!eglBindAPI(EGL_OPENGL_API)) return false;
+    if (!eglInitialize(display, &major, &minor)) return fail();
+    if (!eglBindAPI(EGL_OPENGL_API)) return fail();
 
     constexpr EGLint config_attributes[] = {
         EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
@@ -45,17 +49,16 @@ struct EglWglBackend::Impl {
     EGLint count = 0;
     if (!eglChooseConfig(display, config_attributes, &config, 1, &count) ||
         count != 1) {
-      return false;
+      return fail();
     }
 
     surface = eglCreateWindowSurface(display, config, EGLNativeWindowType{}, nullptr);
-    if (surface == EGL_NO_SURFACE) return false;
+    if (surface == EGL_NO_SURFACE) return fail();
     if (!eglQuerySurface(display, surface, EGL_WIDTH, &width) ||
         !eglQuerySurface(display, surface, EGL_HEIGHT, &height) ||
         width <= 0 || height <= 0) {
-      return false;
+      return fail();
     }
-    if (!eglSwapInterval(display, 1)) return false;
 
     ready = true;
     return true;
@@ -167,8 +170,11 @@ bool EglWglBackend::MakeCurrent(void* user, BackendContext context,
   const EGLContext egl_context =
       reinterpret_cast<EGLContext>(static_cast<std::uintptr_t>(context));
   if (!self.impl_->contexts.contains(egl_context)) return false;
-  return eglMakeCurrent(self.impl_->display, self.impl_->surface,
-                        self.impl_->surface, egl_context) == EGL_TRUE;
+  if (eglMakeCurrent(self.impl_->display, self.impl_->surface,
+                     self.impl_->surface, egl_context) != EGL_TRUE) {
+    return false;
+  }
+  return eglSwapInterval(self.impl_->display, 1) == EGL_TRUE;
 }
 
 bool EglWglBackend::ClearCurrent(void* user) {
