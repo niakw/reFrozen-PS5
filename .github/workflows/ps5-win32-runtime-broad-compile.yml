@@ -149,6 +149,29 @@ jobs:
             build/win32-objects/unresolved-symbols.txt
           if-no-files-found: error
           retention-days: 3
+      - name: Compile and aggregate all passing Win32 x86recomp runtime units
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set -euo pipefail
+          bash -n scripts/ps5/compile-win32-runtime-closure.sh
+          bash scripts/ps5/compile-win32-runtime-closure.sh \
+            "$GITHUB_WORKSPACE/build/x86recomp/src/runtime" \
+            "$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include" \
+            "$GITHUB_WORKSPACE/build/win32-broad-census/results.tsv" \
+            "$GITHUB_WORKSPACE/build/win32-closure"
+      - name: Preserve Win32 runtime closure symbol and ELF evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-closure
+          path: |
+            build/win32-closure/receipt.txt
+            build/win32-closure/elf-header.txt
+            build/win32-closure/unresolved-symbols.txt
+            build/win32-closure/defined-symbols.txt
+            build/win32-closure/object-results.tsv
+          if-no-files-found: error
+          retention-days: 3
       - name: Upload compiler census only
         uses: actions/upload-artifact@v4
         with:
