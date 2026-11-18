@@ -116,6 +116,10 @@ jobs:
         run: |
           OUT=build/ps5-real-opengl-sdk
           ELF="$OUT/refrozen-wgl-real-opengl.elf"
+          # Installed Mesa/OpenGL archives may retain absolute CI build paths in
+          # DWARF. They are not runtime dependencies and must not ship in the
+          # evidence ELF. Strip debug only; keep the symbol table for the ABI gate.
+          llvm-strip-18 --strip-debug "$ELF"
           file "$ELF" | tee "$OUT/file.txt"
           llvm-readelf-18 -h -l -d "$ELF" > "$OUT/elf-metadata.txt"
           llvm-nm-18 "$ELF" > "$OUT/symbols.txt"
