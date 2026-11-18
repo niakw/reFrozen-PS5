@@ -1,0 +1,96 @@
+name: PS5 GL guest thunk header compatibility
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/gen_gl_guest_thunks.py'
+      - 'tests/test_ps5_gl_guest_thunks.py'
+      - 'tests/ps5/gl_thunk_probe_allowlist.txt'
+      - '.github/workflows/ps5-gl-guest-thunks.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate-from-vendored-mesa:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Checkout pinned Encore vendor headers
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: 1e51d1f3383f149a599e36052aba7d887d4b1f77
+          path: build/encore-vendor
+          persist-credentials: false
+          sparse-checkout: |
+            sources/opengl-mesa-26-2/include
+          sparse-checkout-cone-mode: true
+
+      - name: Checkout pinned Win64 ABI headers
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+          sparse-checkout: |
+            runtime
+          sparse-checkout-cone-mode: true
+
+      - name: Run generator unit tests
+        run: python -m unittest discover -s tests -p 'test_ps5_gl_guest_thunks.py' -v
+
+      - name: Generate compatibility thunks from Mesa 26.2 headers
+        run: |
+          python scripts/ps5/gen_gl_guest_thunks.py \
+            --header build/encore-vendor/sources/opengl-mesa-26-2/include/GL/gl.h \
+            --header build/encore-vendor/sources/opengl-mesa-26-2/include/GL/glext.h \
+            --allowlist tests/ps5/gl_thunk_probe_allowlist.txt \
+            --output build/gl_guest_thunks.cpp
+          test -s build/gl_guest_thunks.cpp
+          for symbol in glBegin glEnd glOrtho glTexImage2D glGetString; do
+            grep -q "I_opengl32_dll_${symbol}" build/gl_guest_thunks.cpp
+          done
+
+      - name: Compile generated thunks against exact headers and Win64 CPU ABI
+        run: |
+          clang++ -std=c++20 -O0 -g0 -Wall -Wextra -Werror -Wpedantic \
+            -DGL_GLEXT_PROTOTYPES \
+            -Ibuild/nightsight/runtime \
+            -Ibuild/encore-vendor/sources/opengl-mesa-26-2/include \
+            -c build/gl_guest_thunks.cpp -o build/gl_guest_thunks.o
+          test -s build/gl_guest_thunks.o
+
+      - name: Execute generated Win64 ABI thunks against fake native OpenGL
+        run: |
+          clang++ -std=c++20 -O0 -g0 -Wall -Wextra -Werror -Wpedantic \
+            -DGL_GLEXT_PROTOTYPES \
+            -Ibuild/nightsight/runtime \
+            -Ibuild/encore-vendor/sources/opengl-mesa-26-2/include \
+            tests/ps5/gl_guest_thunk_runtime_test.cpp \
+            build/gl_guest_thunks.o \
+            -o build/gl_guest_thunk_runtime_test
+          ./build/gl_guest_thunk_runtime_test | tee build/gl_guest_thunk_runtime.log
+          grep -q 'gl_guest_thunk_runtime: PASS' build/gl_guest_thunk_runtime.log
+
+      - name: Record generated surface
+        run: |
+          grep '^void I_opengl32_dll_gl' build/gl_guest_thunks.cpp > build/gl_guest_thunks.symbols
+          wc -l build/gl_guest_thunks.symbols
+          sha256sum build/gl_guest_thunks.cpp build/gl_guest_thunks.o > build/gl_guest_thunks.sha256
+
+      - name: Upload public synthetic evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-gl-guest-thunk-probe
+          path: |
+            build/gl_guest_thunks.cpp
+            build/gl_guest_thunks.symbols
+            build/gl_guest_thunks.sha256
+          retention-days: 14
