@@ -11,6 +11,77 @@ from scripts.ps5.pe_probe import inspect_pe, PEFormatError
 DEFAULT_SUFFIXES = {".exe", ".dll", ".asi", ".m3d", ".flt", ".ax"}
 
 
+LEGACY_MPQ_NAMES = (
+    "war3.mpq", "war3local.mpq", "war3x.mpq", "war3xlocal.mpq",
+    "war3patch.mpq",
+)
+
+
+def _child_ci(parent: Path, name: str) -> Path | None:
+    if not parent.is_dir():
+        return None
+    wanted = name.casefold()
+    try:
+        for child in parent.iterdir():
+            if child.name.casefold() == wanted:
+                return child
+    except OSError:
+        return None
+    return None
+
+
+def detect_storage_layout(root: Path) -> dict:
+    """Classify only well-known install-container markers; never enumerate assets."""
+    data = _child_ci(root, "Data")
+    casc = {
+        "build_info": bool((root / ".build.info").is_file()),
+        "data_dir": bool(data and data.is_dir()),
+        "data_data": bool(data and (_child_ci(data, "data") or Path()).is_dir())
+            if data else False,
+        "data_indices": bool(data and (_child_ci(data, "indices") or Path()).is_dir())
+            if data else False,
+        "data_config": bool(data and (_child_ci(data, "config") or Path()).is_dir())
+            if data else False,
+    }
+
+    root_files = {}
+    try:
+        root_files = {
+            p.name.casefold(): p.name
+            for p in root.iterdir()
+            if p.is_file()
+        }
+    except OSError:
+        pass
+    mpqs = [name for name in LEGACY_MPQ_NAMES if name in root_files]
+
+    casc_strong = casc["data_dir"] and (casc["data_data"] or casc["data_indices"])
+    mpq_strong = "war3.mpq" in mpqs and (
+        "war3x.mpq" in mpqs or "war3patch.mpq" in mpqs
+    )
+    if casc_strong and mpq_strong:
+        kind = "mixed_casc_and_legacy_mpq"
+    elif casc_strong:
+        kind = "casc"
+    elif mpq_strong:
+        kind = "legacy_mpq"
+    elif casc["build_info"] or casc["data_dir"] or mpqs:
+        kind = "partial_or_unrecognized"
+    else:
+        kind = "unknown"
+
+    return {
+        "classification": kind,
+        "casc_markers": casc,
+        "legacy_mpq_markers": mpqs,
+        "note": (
+            "Container markers are structural evidence only. Warcraft III 1.30+ "
+            "game data uses CASC; custom .w3m/.w3x maps remain separate map containers."
+        ),
+    }
+
+
+
 def scan_install(root: Path, suffixes: set[str] | None = None) -> dict:
     root = root.resolve()
     suffixes = {s.lower() for s in (suffixes or DEFAULT_SUFFIXES)}
@@ -36,6 +107,7 @@ def scan_install(root: Path, suffixes: set[str] | None = None) -> dict:
         "privacy_note": "absolute installation path intentionally omitted",
         "module_count": len(results),
         "skipped_candidate_count": len(skipped),
+        "storage_layout": detect_storage_layout(root),
         "results": results,
         "skipped_candidates": skipped,
     }
