@@ -33,15 +33,15 @@ def _child_ci(parent: Path, name: str) -> Path | None:
 def detect_storage_layout(root: Path) -> dict:
     """Classify only well-known install-container markers; never enumerate assets."""
     data = _child_ci(root, "Data")
+    data_data = _child_ci(data, "data") if data else None
+    data_indices = _child_ci(data, "indices") if data else None
+    data_config = _child_ci(data, "config") if data else None
     casc = {
         "build_info": bool((root / ".build.info").is_file()),
         "data_dir": bool(data and data.is_dir()),
-        "data_data": bool(data and (_child_ci(data, "data") or Path()).is_dir())
-            if data else False,
-        "data_indices": bool(data and (_child_ci(data, "indices") or Path()).is_dir())
-            if data else False,
-        "data_config": bool(data and (_child_ci(data, "config") or Path()).is_dir())
-            if data else False,
+        "data_data": bool(data_data and data_data.is_dir()),
+        "data_indices": bool(data_indices and data_indices.is_dir()),
+        "data_config": bool(data_config and data_config.is_dir()),
     }
 
     root_files = {}
