@@ -16,6 +16,10 @@ mkdir -p "$OUTDIR"
 
 "$SDK/bin/prospero-clang++" \
   -std=c++20 -O1 -g \
+  -ffile-prefix-map="$ROOT/=source/" \
+  -fdebug-prefix-map="$ROOT/=source/" \
+  -ffile-prefix-map="$SDK/=sdk/" \
+  -fdebug-prefix-map="$SDK/=sdk/" \
   -Wall -Wextra -Werror -Wpedantic -Wconversion \
   -I"$ROOT/ps5/host" -I"$ROOT/ps5/runtime" \
   "$ROOT/tests/ps5/ps5_guest_memory_probe_main.cpp" \
