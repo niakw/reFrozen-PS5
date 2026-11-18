@@ -45,11 +45,14 @@ The map is metadata only; it contains no Warcraft code or assets.
 
 3. **Audio**
    - Do **not** route the SDL3 audio-stream ABI through SDL2.
-   - Implement the required host audio queue against the existing
-     `sceAudioOut` adapter and preserve the Win32 Miles/DirectSound timing
-     semantics above it.
-   - The SDL3 audio symbols should disappear from the runtime closure once this
-     adapter is wired.
+   - The main Miles/DirectSound software mixer now runs at the source rate
+     requested by the guest (44.1 kHz by default), then a dedicated native
+     thread linearly resamples to the PS5 output rate of 48 kHz and feeds the
+     existing `sceAudioOut` bridge in 256-frame grains.
+   - Blocking `sceAudioOutOutput` calls stay off the guest/game thread.
+   - The isolated mixer edge contains no unresolved SDL audio functions.
+     `winmm_wave.cpp` still owns a secondary SDL stream path and must be
+     converted separately before claiming SDL-free audio.
 
 4. **SDL_Renderer / surfaces**
    - These calls are not the Warcraft 3D renderer. They are host utility paths
