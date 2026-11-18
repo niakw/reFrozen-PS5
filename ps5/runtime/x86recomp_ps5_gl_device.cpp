@@ -92,7 +92,7 @@ SharedEgl& Egl() {
 std::atomic<uint64_t> g_next_dc{1};
 
 [[noreturn]] void Unsupported(const char* what) {
-  FatalF("ps5-gl device: unsupported on Warcraft 1.26a OpenGL route: %s", what);
+  FatalF("ps5-gl device: unsupported on guest OpenGL route: %s", what);
   __builtin_unreachable();
 }
 
