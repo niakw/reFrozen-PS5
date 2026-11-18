@@ -14,6 +14,11 @@ using WglHandle = std::uint64_t;
 using DeviceContext = std::uint64_t;
 using BackendContext = std::uint64_t;
 
+// WGL_ARB_create_context_profile bit values. Zero means a legacy/default
+// context request; the PS5 EGL backend maps that to compatibility profile.
+inline constexpr int kWglContextCoreProfileBit = 0x00000001;
+inline constexpr int kWglContextCompatibilityProfileBit = 0x00000002;
+
 struct WglBackendOps {
   void* user{};
   BackendContext (*create_context)(void* user, BackendContext share,
