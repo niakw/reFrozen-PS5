@@ -17,9 +17,9 @@ import re
 import sys
 
 PROTO_RE = re.compile(
-    r"^[ \\t]*GLAPI[ \\t]+([^;\\n]+?)[ \\t]+"
-    r"(?:APIENTRY|GLAPIENTRY)[ \\t]+(gl\\w+)[ \\t]*"
-    r"\\(([^;]*?)\\)[ \\t]*;",
+    r"^[ \t]*GLAPI[ \t]+([^;\n]+?)[ \t]+"
+    r"(?:APIENTRY|GLAPIENTRY)[ \t]+(gl\w+)[ \t]*"
+    r"\(([^;]*?)\)[ \t]*;",
     re.M,
 )
 SPACE_RE = re.compile(r"\s+")
