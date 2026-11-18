@@ -47,7 +47,7 @@ class Win32RawInputHookPatchTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             rt = self._runtime(Path(d))
             p = rt / "hle/user32_input.cpp"
-            p.write_text(p.read_text().replace("TickCount()", "TickCount64()", 1),
+            p.write_text(p.read_text().replace("TickCount()});", "TickCount64()});", 1),
                          encoding="utf-8")
             with self.assertRaises(SystemExit):
                 patch_win32_raw_input_hooks(rt)
