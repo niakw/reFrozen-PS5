@@ -5,7 +5,7 @@ import struct
 import tempfile
 import unittest
 
-from scripts.ps5.pe_probe import inspect_pe, PEFormatError
+from scripts.ps5.pe_probe import inspect_pe, PEFormatError, _graphics_profile
 
 
 def synthetic_pe(machine: int, bits: int) -> bytes:
@@ -39,6 +39,38 @@ class PEProbeTest(unittest.TestCase):
                 self.assertEqual(result["sections"], [".text"])
                 self.assertIsNone(result["warcraft_version"])
                 self.assertNotIn(str(Path(temp)), str(result))
+
+    def test_graphics_profile_is_evidence_based(self):
+        opengl = _graphics_profile([
+            {"dll_normalized": "kernel32.dll"},
+            {"dll_normalized": "opengl32.dll"},
+            {"dll_normalized": "user32.dll"},
+        ])
+        self.assertEqual(opengl["static_backends"], [
+            {"backend": "opengl", "dlls": ["opengl32.dll"]}
+        ])
+        self.assertEqual(opengl["ps5_initial_route"], "opengl_wgl_to_ps5_egl")
+        self.assertEqual(opengl["confidence"], "imports_only")
+
+        d3d11 = _graphics_profile([
+            {"dll_normalized": "d3d11.dll"},
+            {"dll_normalized": "dxgi.dll"},
+        ])
+        self.assertEqual(
+            [item["backend"] for item in d3d11["static_backends"]],
+            ["direct3d11", "direct3d12"],
+        )
+        self.assertEqual(
+            d3d11["ps5_initial_route"],
+            "renderer_translation_or_runtime_forcing_required",
+        )
+
+        dynamic = _graphics_profile([{"dll_normalized": "kernel32.dll"}])
+        self.assertEqual(dynamic["static_backends"], [])
+        self.assertEqual(
+            dynamic["ps5_initial_route"],
+            "undetermined_dynamic_renderer_possible",
+        )
 
     def test_bad_inputs_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
