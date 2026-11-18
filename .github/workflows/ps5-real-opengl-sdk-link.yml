@@ -99,6 +99,13 @@ jobs:
           (cd "$PS5_OPENGL_SDK_PREFIX" && sha256sum --check --strict manifest.sha256)
           grep -q 'EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR' tests/ps5/egl_public_gl46_compat.c
 
+      - name: Save exact installed OpenGL SDK cache immediately
+        if: steps.opengl-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/ps5-opengl-sdk
+          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1
+
       - name: Link reFrozen WGL backend against the installed PS5 OpenGL SDK
         env:
           PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
@@ -115,7 +122,7 @@ jobs:
           llvm-nm-18 -u "$ELF" > "$OUT/undefined-symbols.txt" || true
           sha256sum "$ELF" > "$OUT/SHA256SUMS"
           grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' "$OUT/elf-metadata.txt"
-          grep -q 'REFROZEN_PS5_REAL_EGL pass=1' <(strings "$ELF")
+          grep -q 'REFROZEN_PS5_REAL_EGL pass=%d' <(strings "$ELF")
           for symbol in eglGetDisplay eglInitialize eglCreateContext eglMakeCurrent eglSwapBuffers; do
             grep -q " $symbol$" "$OUT/symbols.txt"
           done
