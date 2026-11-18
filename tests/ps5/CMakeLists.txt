@@ -24,3 +24,19 @@ endfunction()
 
 add_guest_layout_fixture(guest32_ranges)
 add_guest_layout_fixture(guest64_ranges)
+add_guest_layout_fixture(exact_guest_reservation)
+
+if(REFROZEN_PS5_COMPILE_ONLY)
+  add_library(ps5_exact_reservation_adapter_compile OBJECT
+              "../../ps5/runtime/exact_reservation_ps5.cpp")
+  target_compile_features(ps5_exact_reservation_adapter_compile PRIVATE cxx_std_20)
+  target_include_directories(ps5_exact_reservation_adapter_compile PRIVATE
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/host"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/runtime")
+  if(MSVC)
+    target_compile_options(ps5_exact_reservation_adapter_compile PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_exact_reservation_adapter_compile PRIVATE
+                           -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+endif()

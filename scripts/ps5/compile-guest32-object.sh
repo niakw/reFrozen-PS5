@@ -20,8 +20,10 @@ BUILD="$ROOT/build/ps5-sdk-smoke"
 cmake -S "$ROOT/tests/ps5" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$ROOT/ps5/toolchain/ps5-payload.cmake" \
   -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
-cmake --build "$BUILD" --target guest32_ranges_compile guest64_ranges_compile --parallel 2
-for name in guest32_ranges guest64_ranges; do
+cmake --build "$BUILD" --target \
+  guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile \
+  ps5_exact_reservation_adapter_compile --parallel 2
+for name in guest32_ranges guest64_ranges exact_guest_reservation; do
   object="$BUILD/CMakeFiles/${name}_compile.dir/${name}_test.cpp.o"
   if [[ ! -s "$object" ]]; then
     echo "Missing PS5 compile-only object: $object" >&2
@@ -34,4 +36,15 @@ for name in guest32_ranges guest64_ranges; do
     exit 1
   fi
 done
-echo "PS5-target guest32 and guest64 objects compiled; NOT a linked PS5 executable."
+adapter_object="$(find "$BUILD/CMakeFiles/ps5_exact_reservation_adapter_compile.dir" -type f -name '*.o' -print -quit)"
+if [[ -z "$adapter_object" || ! -s "$adapter_object" ]]; then
+  echo "Missing PS5 exact-reservation adapter object" >&2
+  exit 1
+fi
+llvm-readobj-18 --file-headers "$adapter_object" > "$BUILD/exact-reservation-adapter-object-header.txt"
+if ! grep -Eq 'Arch: x86_64|Machine: EM_X86_64' "$BUILD/exact-reservation-adapter-object-header.txt"; then
+  cat "$BUILD/exact-reservation-adapter-object-header.txt" >&2
+  echo "PS5 adapter object is not x86-64" >&2
+  exit 1
+fi
+echo "PS5-target guest layout/reservation objects compiled; NOT a linked PS5 executable."
