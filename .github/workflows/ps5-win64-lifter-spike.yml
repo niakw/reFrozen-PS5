@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'scripts/ps5/synthetic_pe64.py'
+      - 'scripts/ps5/private_win64_lift.py'
+      - 'tests/test_ps5_private_win64_lift.py'
       - 'scripts/ps5/synthetic_pe64_memory.py'
       - 'tests/test_ps5_synthetic_pe64.py'
       - 'tests/test_ps5_synthetic_pe64_memory.py'
@@ -37,6 +39,25 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_ps5_synthetic_pe64.py' -v
           python scripts/ps5/synthetic_pe64.py build/synthetic_win64.exe
+      - name: Validate private lift wrapper with synthetic PE64
+        run: |
+          python -m unittest tests.test_ps5_private_win64_lift -v
+          python scripts/ps5/private_win64_lift.py build/synthetic_win64.exe \
+            --lifter-root build/nightsight \
+            --output "$GITHUB_WORKSPACE/private/ci-win64-lift"
+          test -s private/ci-win64-lift/generated/code_0000.c
+          test -s private/ci-win64-lift/lift-report.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p=json.loads(Path("private/ci-win64-lift/lift-report.json").read_text())
+          assert p["status"] == "ok", p
+          assert p["translation"]["unsupported"] == {}, p
+          assert p["input"]["machine"] == "x86_64", p
+          assert "/home/runner/" not in json.dumps(p), p
+          print("private Win64 lift wrapper: PASS")
+          PY
+
       - name: Translate Win64 synthetic executable
         run: |
           python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_win64.exe","build/generated"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation.log
