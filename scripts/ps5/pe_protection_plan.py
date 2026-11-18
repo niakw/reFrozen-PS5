@@ -56,7 +56,9 @@ def plan_module(module: dict, granule: int = DEFAULT_GRANULE) -> dict:
         add_range(base, min(headers, size), "PE headers", True, False, False)
 
     for section in module.get("section_details", []):
-        span = max(int(section.get("virtual_size", 0)), int(section.get("raw_size", 0)))
+        virtual_size = int(section.get("virtual_size", 0))
+        raw_size = int(section.get("raw_size", 0))
+        span = virtual_size if virtual_size else raw_size
         if not span:
             continue
         add_range(
