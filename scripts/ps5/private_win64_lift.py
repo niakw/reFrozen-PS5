@@ -14,6 +14,10 @@ from pathlib import Path
 import subprocess
 import sys
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from scripts.ps5.pe_probe import inspect_pe, PEFormatError
 
 PINNED_NIGHTSIGHT = "63742ed02e039b292bbf341a33b3bb8c73457fea"
@@ -162,7 +166,7 @@ def lift_private(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    repo_root = Path(__file__).resolve().parents[2]
+    repo_root = REPO_ROOT
     parser.add_argument("executable", type=Path)
     parser.add_argument(
         "--lifter-root", required=True, type=Path,
