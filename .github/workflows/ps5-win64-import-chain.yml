@@ -7,6 +7,7 @@ on:
       - 'scripts/ps5/build-win64-import-chain-elf.sh'
       - 'tests/test_ps5_synthetic_pe64_import.py'
       - 'tests/ps5/ps5_win64_import_handlers.c'
+      - 'tests/ps5/ps5_win64_import_host_shims.cpp'
       - 'tests/ps5/ps5_win64_import_chain_main.cpp'
       - '.github/workflows/ps5-win64-import-chain.yml'
   workflow_dispatch:
@@ -54,6 +55,26 @@ jobs:
           grep -q "kernel32.dll!GetTickCount64" build/generated-import/tables.c
           grep -q "I_kernel32_dll_GetTickCount64" build/generated-import/tables.c
 
+      - name: Execute translated IAT chain on Linux with PS5 contract shims
+        run: |
+          mkdir -p build/host-import-chain
+          python scripts/ps5/bin2cpp.py build/synthetic_win64_import.exe build/host-import-chain/synthetic_import_pe_blob.cpp --symbol g_refrozen_synthetic_import_pe
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-import -c build/generated-import/code_0000.c -o build/host-import-chain/code.o
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-import -c build/generated-import/tables.c -o build/host-import-chain/tables.o
+          clang -std=gnu11 -O0 -Wall -Wextra -Werror -Ibuild/nightsight/runtime -Ibuild/generated-import -c tests/ps5/ps5_win64_import_handlers.c -o build/host-import-chain/handlers.o
+          clang++ -std=gnu++20 -O0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/host -Ips5/runtime -Ibuild/nightsight/runtime -Ibuild/generated-import \
+            tests/ps5/ps5_win64_import_chain_main.cpp \
+            tests/ps5/ps5_win64_import_host_shims.cpp \
+            build/host-import-chain/synthetic_import_pe_blob.cpp \
+            ps5/runtime/exact_reservation_ps5.cpp \
+            ps5/runtime/direct_guest_backing_ps5.cpp \
+            ps5/runtime/guest_image_mapping_ps5.cpp \
+            build/host-import-chain/code.o build/host-import-chain/tables.o build/host-import-chain/handlers.o \
+            -o build/host-import-chain/import-chain-test
+          ./build/host-import-chain/import-chain-test 2>&1 | tee build/host-import-chain/execution.log
+          grep -q "REFROZEN_PS5_IMPORT_CHAIN pass=1" build/host-import-chain/execution.log
+          grep -q "calls=1 fallback=0" build/host-import-chain/execution.log
       - name: Download and verify Payload SDK v0.42
         run: |
           mkdir -p build/sdk-download build/sdk-root
