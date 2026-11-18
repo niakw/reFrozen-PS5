@@ -55,7 +55,7 @@ jobs:
       - name: Validate OpenSSL compatibility shim on host
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends libssl-dev
+          sudo apt-get install -y --no-install-recommends libssl-dev lld-18 llvm-18
           clang -std=gnu11 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
             -Ips5/runtime tests/ps5/commoncrypto_openssl_compat_test.c -lcrypto \
             -o build/commoncrypto-openssl-test
@@ -102,8 +102,6 @@ jobs:
             build/nightsight/runtime build/runtime-first-launch
           grep -q 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=22 aggregate=1 excluded=steam.c,vulkan.c' \
             build/runtime-first-launch/receipt.txt
-            build/runtime-first-launch/undefined-symbols.txt
-            build/runtime-first-launch/symbols.txt
           test "$(wc -l < build/runtime-first-launch/objects.list | tr -d ' ')" -eq 22
           test -s build/runtime-first-launch/first-launch-runtime.o
           file build/runtime-first-launch/first-launch-runtime.o
@@ -121,5 +119,7 @@ jobs:
             build/runtime-census/logs/
             build/runtime-first-launch/results.tsv
             build/runtime-first-launch/receipt.txt
+            build/runtime-first-launch/undefined-symbols.txt
+            build/runtime-first-launch/symbols.txt
           if-no-files-found: error
           retention-days: 14
