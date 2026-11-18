@@ -1,0 +1,114 @@
+name: PS5 synthetic Win64 WGL import chain
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/**'
+      - 'ps5/host/**'
+      - 'ps5/runtime/**'
+      - 'scripts/ps5/synthetic_pe64_wgl.py'
+      - 'scripts/ps5/build-win64-wgl-chain-elf.sh'
+      - 'tests/test_ps5_synthetic_pe64_wgl.py'
+      - 'tests/ps5/ps5_win64_wgl_import_chain_main.cpp'
+      - '.github/workflows/ps5-win64-wgl-chain.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-wgl-guest-chain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install translator dependencies and LLVM inspection tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang-18 llvm-18 lld-18 curl unzip file
+          python -m pip install --disable-pip-version-check capstone==5.0.6 lief==0.16.6
+
+      - name: Checkout pinned Win64 translator/runtime headers
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+
+      - name: Generate and translate public WGL Win64 fixture
+        run: |
+          python -m unittest discover -s tests -p 'test_ps5_synthetic_pe64_wgl.py' -v
+          python scripts/ps5/synthetic_pe64_wgl.py build/synthetic_wgl.exe
+          python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_wgl.exe","build/generated-wgl"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation-wgl.log
+          cat build/translation-wgl.log
+          test -s build/generated-wgl/code_0000.c
+          test -s build/generated-wgl/tables.c
+          grep -q 'UNSUPPORTED: {}' build/translation-wgl.log
+          for import in wglCreateContext wglMakeCurrent wglGetProcAddress wglSwapBuffers; do
+            grep -q "opengl32.dll!${import}" build/generated-wgl/tables.c
+          done
+
+      - name: Download and verify Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+
+      - name: Link translated WGL chain for PS5 ABI
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          NIGHTSIGHT_FW: ${{ github.workspace }}/build/nightsight
+          REFROZEN_GENERATED_DIR: ${{ github.workspace }}/build/generated-wgl
+          REFROZEN_SYNTHETIC_PE: ${{ github.workspace }}/build/synthetic_wgl.exe
+        run: |
+          bash scripts/ps5/build-win64-wgl-chain-elf.sh
+          test -s build/ps5-win64-wgl-chain/refrozen-synthetic-win64-wgl-chain.elf
+
+      - name: Inspect PS5 WGL-chain ELF
+        run: |
+          OUT=build/ps5-win64-wgl-chain
+          ELF="$OUT/refrozen-synthetic-win64-wgl-chain.elf"
+          file "$ELF" | tee "$OUT/file.txt"
+          llvm-readelf-18 -h -l -d "$ELF" > "$OUT/elf-metadata.txt"
+          llvm-nm-18 "$ELF" > "$OUT/symbols.txt"
+          llvm-nm-18 -u "$ELF" > "$OUT/undefined-symbols.txt" || true
+          sha256sum "$ELF" > "$OUT/SHA256SUMS"
+          grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' "$OUT/elf-metadata.txt"
+          grep -Eq 'Type:.*DYN' "$OUT/elf-metadata.txt"
+          for symbol in             I_opengl32_dll_wglCreateContext             I_opengl32_dll_wglMakeCurrent             I_opengl32_dll_wglGetProcAddress             I_opengl32_dll_wglSwapBuffers; do
+            grep -q "$symbol" "$OUT/symbols.txt"
+          done
+          grep -q 'REFROZEN_PS5_WGL_CHAIN pass=1' <(strings "$ELF")
+          if grep -qE '/lib(64)?/ld-linux|/libexec/ld-elf' "$OUT/elf-metadata.txt"; then
+            echo 'Unexpected desktop ELF interpreter' >&2
+            exit 1
+          fi
+          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
+            cat "$OUT/forbidden-strings.txt" >&2
+            exit 1
+          fi
+          cat "$OUT/undefined-symbols.txt"
+          cat "$OUT/SHA256SUMS"
+
+      - name: Upload synthetic WGL-chain evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-ps5-synthetic-win64-wgl-chain
+          path: |
+            build/ps5-win64-wgl-chain/refrozen-synthetic-win64-wgl-chain.elf
+            build/ps5-win64-wgl-chain/file.txt
+            build/ps5-win64-wgl-chain/elf-metadata.txt
+            build/ps5-win64-wgl-chain/undefined-symbols.txt
+            build/ps5-win64-wgl-chain/SHA256SUMS
+            build/translation-wgl.log
+          if-no-files-found: error
+          retention-days: 14

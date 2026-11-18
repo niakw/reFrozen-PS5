@@ -89,8 +89,10 @@ change Warcraft simulation timing or map logic.
       proprietary code.
 - [x] PS5 exact guest memory/runtime core builds independently of graphics.
 - [ ] PE probe reports a conservative graphics-route classification.
-- [ ] Build a synthetic WGL contract fixture: create context, make current,
+- [x] Build a synthetic WGL contract fixture: create context, make current,
       proc lookup, swap, destroy.
+- [x] Link a translated Win64 guest through four real WGL import shims into a
+      PS5 ABI ELF (`SYNTHETIC_WGL_CHAIN.md`).
 - [ ] Compile PS5 EGL adapter against the same pinned OpenGL source/profile
       used by Encore.
 - [ ] Link a synthetic PS5 OpenGL ELF and present a frame.
