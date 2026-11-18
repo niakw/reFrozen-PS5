@@ -156,7 +156,7 @@ int main() {
   using namespace refrozen::ps5::graphics;
 
   EglWglBackend backend;
-  WglRegistry registry(MakeEglBackendOps(&backend));
+  WglRegistry registry(backend.Ops());
 
   const WglHandle first =
       registry.CreateContext(kWglContextCompatibilityProfileBit, 0);
