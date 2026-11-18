@@ -210,6 +210,12 @@ jobs:
           )
           print("SDL call-site lines:", len(out))
           PY
+          {
+            printf 'pattern\tlocation\tsource_line\n'
+            grep -R -n -E '(^|[^A-Za-z0-9_])(di_key|di_mouse_move|di_mouse_wheel|di_mouse_button)\s*\(' "$RUNTIME" \
+              | sed "s#^$RUNTIME/##" \
+              | awk -F: '{line=$1 ":" $2; $1=""; $2=""; sub(/^::?/,""); print "dinput_hook\t" line "\t" $0}' || true
+          } > build/win32-closure/native-bridge-hooks.tsv
       - name: Preserve Win32 runtime closure symbol and ELF evidence only
         uses: actions/upload-artifact@v4
         with:
@@ -222,6 +228,7 @@ jobs:
             build/win32-closure/object-results.tsv
             build/win32-closure/import-map.json
             build/win32-closure/sdl-call-sites.tsv
+            build/win32-closure/native-bridge-hooks.tsv
           if-no-files-found: error
           retention-days: 3
       - name: Upload compiler census only
