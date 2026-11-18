@@ -8,6 +8,14 @@ OUT=${2:?usage: compile-win64-runtime-census.sh RUNTIME_ROOT OUT_DIR}
 SDK=${PS5_PAYLOAD_SDK:?PS5_PAYLOAD_SDK is required}
 CC="$SDK/bin/prospero-clang"
 [[ -x "$CC" && -d "$RUNTIME" ]]
+extra_cflags=()
+if [[ -n "${REFROZEN_PS5_CDEPS:-}" ]]; then
+  [[ -d "$REFROZEN_PS5_CDEPS/include/openssl" && -f "$REFROZEN_PS5_CDEPS/lib/libcrypto.a" ]] || {
+    echo "REFROZEN_PS5_CDEPS must contain OpenSSL headers and lib/libcrypto.a" >&2
+    exit 2
+  }
+  extra_cflags+=("-I$REFROZEN_PS5_CDEPS/include")
+fi
 mkdir -p "$OUT/logs" "$OUT/objects"
 printf 'file\tstatus\n' > "$OUT/results.tsv"
 passed=0
@@ -20,7 +28,7 @@ for src in "$RUNTIME"/*.c; do
   if "$CC" -std=gnu11 -O0 -g0 \
       -Wno-unknown-pragmas -Wno-deprecated-declarations \
       -I"$RUNTIME" -I"$ROOT/ps5/runtime" -I"$(dirname "$RUNTIME")/third_party/vulkan/include" \
-      -c "$src" -o "$obj" >"$log" 2>&1; then
+      "${extra_cflags[@]}" -c "$src" -o "$obj" >"$log" 2>&1; then
     printf '%s\tPASS\n' "$name" >> "$OUT/results.tsv"
     passed=$((passed + 1))
   else
