@@ -29,18 +29,18 @@ jobs:
         run: |
           python scripts/ps5/win64_runtime_portability.py build/nightsight/runtime --output build/win64-runtime-portability.json
           python - <<'PY'
-import json
-p="build/win64-runtime-portability.json"
-r=json.load(open(p))
-f={x["path"]:x for x in r["files"]}
-assert "arm64_context_asm" in f["fiber.c"]["blockers"], f["fiber.c"]
-assert "mach_api" in f["rt.c"]["blockers"], f["rt.c"]
-assert "mach_api" in f["kernel32.c"]["blockers"], f["kernel32.c"]
-assert "apple_objc_ui" in f["cocoa.m"]["blockers"], f["cocoa.m"]
-assert f["cpu.h"]["blockers"] == {}, f["cpu.h"]
-assert r["root"] is None
-print(json.dumps(r["summary"], indent=2, sort_keys=True))
-PY
+          import json
+          p="build/win64-runtime-portability.json"
+          r=json.load(open(p))
+          f={x["path"]:x for x in r["files"]}
+          assert "arm64_context_asm" in f["fiber.c"]["blockers"], f["fiber.c"]
+          assert "mach_api" in f["rt.c"]["blockers"], f["rt.c"]
+          assert "mach_api" in f["kernel32.c"]["blockers"], f["kernel32.c"]
+          assert "apple_objc_ui" in f["cocoa.m"]["blockers"], f["cocoa.m"]
+          assert f["cpu.h"]["blockers"] == {}, f["cpu.h"]
+          assert r["root"] is None
+          print(json.dumps(r["summary"], indent=2, sort_keys=True))
+          PY
       - name: Upload portability evidence
         uses: actions/upload-artifact@v4
         with:
