@@ -214,3 +214,18 @@ if(NOT REFROZEN_PS5_COMPILE_ONLY)
   endif()
   add_test(NAME ps5_dinput_pad_bridge COMMAND ps5_dinput_pad_bridge_test)
 endif()
+
+if(NOT REFROZEN_PS5_COMPILE_ONLY)
+  add_executable(ps5_stereo_resampler_test
+    ps5_stereo_resampler_test.cpp
+    ../../ps5/runtime/ps5_stereo_resampler.cpp)
+  target_include_directories(ps5_stereo_resampler_test PRIVATE ../../ps5/runtime)
+  target_compile_features(ps5_stereo_resampler_test PRIVATE cxx_std_20)
+  if(MSVC)
+    target_compile_options(ps5_stereo_resampler_test PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_stereo_resampler_test PRIVATE
+      -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+  add_test(NAME ps5_stereo_resampler COMMAND ps5_stereo_resampler_test)
+endif()
