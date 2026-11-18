@@ -30,7 +30,7 @@ Outputs stay under git-ignored `build/ps5-sdk-smoke/`. The script refuses to run
 
 ## What CI now proves
 
-Run: https://github.com/niakw/refrozen_ps5/actions/runs/44219664773
+Run: https://github.com/niakw/refrozen_ps5/actions/runs/44219929718
 
 - the official SDK archive passed its pinned SHA-256 check;
 - CMake identified Clang 18.1.3;
