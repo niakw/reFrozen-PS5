@@ -193,3 +193,39 @@ vulkan.c
 ```
 
 `steam.c` and the NightSight macOS Vulkan loader are intentionally outside the selected first-launch OpenGL route. `bcrypt.c` remains the only potentially relevant generic Win64 service that should be driven by the exact private Warcraft code/import census rather than ported blindly.
+
+
+## OpenSSL bcrypt increment
+
+The generic Win64 `bcrypt.dll` HLE now compiles for the PS5 ABI without
+CommonCrypto. Its existing CNG-facing implementation is retained while a narrow
+compatibility layer maps the required primitives to the same PacBrew OpenSSL
+family already pinned by Encore:
+
+- PacBrew v0.40.2 archive SHA-256
+  `a85f65de418a8e6a898c6c3e3c870d50fff7618a200e4dd59ea9692af6ecec4d`;
+- MD5/SHA1/SHA256/SHA384/SHA512 and HMAC stay available;
+- HMAC duplication is made explicit because OpenSSL contexts are opaque;
+- AES CBC/ECB/GCM continues through the upstream CNG implementation, with the
+  CommonCrypto `CCCrypt` dependency adapted to OpenSSL EVP;
+- host tests cover SHA-256, HMAC context cloning and a NIST AES-CBC vector.
+
+Compiler evidence: runtime census run `44276356249` reports **21 PASS / 2
+FAIL**, including `bcrypt.c PASS`.
+
+The only compiler-red upstream runtime files are now:
+
+```text
+steam.c
+vulkan.c
+```
+
+Both failures are caused by the candidate runtime's macOS Mach-O/dyld
+integration. They remain intentionally outside the first offline/LAN Warcraft
+Classic OpenGL route: Steam integration is not required for launch, and the
+selected renderer uses the separate PS5 WGL/EGL/OpenGL path rather than the
+candidate runtime's macOS Vulkan loader.
+
+This remains compiler/semantic-test evidence. The private Warcraft install
+audit determines whether bcrypt is actually imported by a supplied build, and
+real PS5 execution is still required for runtime qualification.
