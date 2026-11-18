@@ -55,7 +55,9 @@ def patch_runtime(runtime: Path) -> None:
     handles = runtime / "handles.c"
     pdh = runtime / "pdh.c"
     fiber = runtime / "fiber.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber)):
+    display = runtime / "display.c"
+    user32 = runtime / "user32.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -93,6 +95,165 @@ static uint32_t now_ms(void) { return (uint32_t)(monotonic_ns() / 1000000); }
 """,
     )
 
+
+
+    # PS5 display/user32: keep the Win32-visible monitor/mode contract but
+    # replace CoreGraphics ownership with one native console display.
+    replace_once(
+        display,
+        """#include "rt.h"
+#include <math.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <pthread.h>
+""",
+        """#include "rt.h"
+#include <math.h>
+#include <pthread.h>
+""",
+    )
+    replace_once(
+        display,
+        """typedef struct { CGDirectDisplayID id; int32_t x, y; uint32_t w, h, hz; uint32_t nw, nh; Mode *modes; int nmodes; uint32_t capw, caph; } Disp;   // w,h: current (maybe emulated); nw,nh: native
+""",
+        """typedef struct { int32_t x, y; uint32_t w, h, hz; uint32_t nw, nh; Mode *modes; int nmodes; uint32_t capw, caph; } Disp;   // w,h: current (maybe emulated); nw,nh: native
+""",
+    )
+    replace_once(
+        display,
+        """static uint32_t mode_hz(CGDisplayModeRef m) { double r = CGDisplayModeGetRefreshRate(m); return r > 0 ? (uint32_t)(r + 0.5) : 60; }
+""",
+        """""",
+    )
+    replace_between_once(
+        display,
+        "static void disp_init(void) {",
+        "static int disp_count(void) {",
+        """static int ps5_display_state(uint32_t *w, uint32_t *h, uint32_t *hz) {
+    extern int rt_ps5_display_state(uint32_t *, uint32_t *, uint32_t *) __attribute__((weak));
+    if (rt_ps5_display_state && rt_ps5_display_state(w, h, hz)) return 1;
+    *w = 1920; *h = 1080; *hz = 60;
+    return 0;
+}
+static void disp_init(void) {
+    Disp *d = &disps[0];
+    uint32_t w = 1920, h = 1080, hz = 60;
+    (void)ps5_display_state(&w, &h, &hz);
+    if (!w || !h) { w = 1920; h = 1080; }
+    if (!hz) hz = 60;
+    d->x = d->y = 0;
+    d->w = d->nw = w; d->h = d->nh = h; d->hz = hz;
+    d->capw = w; d->caph = h;
+
+    static const uint32_t common[][2] = {
+        {1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}
+    };
+    for (size_t i = 0; i < sizeof common / sizeof common[0]; i++) {
+        add_mode(d, common[i][0], common[i][1], 60);
+        if (hz >= 120) add_mode(d, common[i][0], common[i][1], 120);
+    }
+    add_mode(d, w, h, hz);
+    qsort(d->modes, d->nmodes, sizeof(Mode), mode_cmp);
+    ndisp = 1;
+    rt_log("[display] PS5 DISPLAY1: %ux%u @ %u Hz, %d modes\\n",
+           d->w, d->h, d->hz, d->nmodes);
+    if (getenv("RT_LIST_MODES"))
+        for (int i = 0; i < d->nmodes; i++)
+            rt_log("[display]   %ux%u @ %u\\n",
+                   d->modes[i].w, d->modes[i].h, d->modes[i].hz);
+}
+""",
+    )
+    replace_once(
+        display,
+        """int rt_primary_rect(int32_t r[4]) {
+    if (!disp_count()) { r[0] = r[1] = 0; r[2] = 1920; r[3] = 1080; return 0; }
+    r[0] = disps[0].x; r[1] = disps[0].y; r[2] = disps[0].x + (int32_t)disps[0].w; r[3] = disps[0].y + (int32_t)disps[0].h;
+    return 1;
+}
+""",
+        """int rt_primary_rect(int32_t r[4]) {
+    if (!disp_count()) { r[0] = r[1] = 0; r[2] = 1920; r[3] = 1080; return 0; }
+    r[0] = disps[0].x; r[1] = disps[0].y; r[2] = disps[0].x + (int32_t)disps[0].w; r[3] = disps[0].y + (int32_t)disps[0].h;
+    return 1;
+}
+uint32_t rt_primary_refresh(void) { return disp_count() ? disps[0].hz : 60; }
+""",
+    )
+    replace_once(
+        display,
+        """#include "cocoa.h"
+static void change_settings(uint64_t dm, int wide, uint32_t flags) {
+""",
+        """void win_relayout(void);
+extern void rt_ps5_display_mode_changed(uint32_t, uint32_t, uint32_t) __attribute__((weak));
+extern void rt_ps5_apply_gamma_ramp(const uint16_t [3][256]) __attribute__((weak));
+static void ps5_mode_changed(const Disp *d) {
+    if (rt_ps5_display_mode_changed)
+        rt_ps5_display_mode_changed(d->w, d->h, d->hz);
+}
+static void change_settings(uint64_t dm, int wide, uint32_t flags) {
+""",
+    )
+    replace_once(
+        display,
+        """    cocoa_set_virtual_screen(native ? 0 : (int)w, native ? 0 : (int)h);
+    win_relayout();
+""",
+        """    ps5_mode_changed(d);
+    win_relayout();
+""",
+    )
+    replace_once(
+        display,
+        """    cocoa_set_virtual_screen(0, 0);
+    win_relayout();
+""",
+        """    ps5_mode_changed(d);
+    win_relayout();
+""",
+    )
+    replace_once(
+        display,
+        """    const char *apply = getenv("RT_GAMMA");
+    if (apply && *apply == '1' && disp_count()) {
+        float t[3][256];
+        for (int ch = 0; ch < 3; ch++) for (int i = 0; i < 256; i++) t[ch][i] = gamma_ramp[ch][i] / 65535.0f;
+        CGSetDisplayTransferByTable(disps[0].id, 256, t[0], t[1], t[2]);   // restored by macOS when the process exits
+    }
+""",
+        """    if (rt_ps5_apply_gamma_ramp) rt_ps5_apply_gamma_ramp(gamma_ramp);
+""",
+    )
+    replace_once(
+        user32,
+        """#include "rt.h"
+#include <CoreGraphics/CoreGraphics.h>
+""",
+        """#include "rt.h"
+""",
+    )
+    replace_once(
+        user32,
+        """int rt_primary_rect(int32_t r[4]);   // display.c: current (possibly emulated) primary display mode
+""",
+        """int rt_primary_rect(int32_t r[4]);   // display.c: current (possibly emulated) primary display mode
+uint32_t rt_primary_refresh(void);
+""",
+    )
+    replace_once(
+        user32,
+        """    case 116: RET(60); break;                               // VREFRESH
+""",
+        """    case 116: RET(rt_primary_refresh()); break;             // VREFRESH
+""",
+    )
+    replace_once(
+        user32,
+        """    const char *desc = A0 ? "Built-in Display" : "Apple GPU";
+""",
+        """    const char *desc = A0 ? "PS5 Display" : "PS5 GPU";
+""",
+    )
 
     replace_once(
         kernel32,
