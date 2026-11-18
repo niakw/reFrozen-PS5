@@ -47,6 +47,15 @@ jobs:
           for name,g in r['groups'].items():
               print(f"{name}: symbols={len(g['symbols'])} seen={len(g['seen'])} files={g['files']}")
           PY
+      - name: Trace SDL_GPU ownership and CreateGpuDevice callers
+        run: |
+          {
+            echo '=== CreateGpuDevice references ==='
+            grep -RIn -E 'CreateGpuDevice|SDL_CreateGPUDevice|SDL_GPU' build/x86recomp/src/runtime || true
+          } | tee build/ps5-sdl-gpu-route.txt
+          grep -q 'gfx/gpu_device.cpp' build/ps5-sdl-gpu-route.txt
+          grep -q 'CreateGpuDevice' build/ps5-sdl-gpu-route.txt
+
       - name: Upload text/JSON contract only
         uses: actions/upload-artifact@v4
         with:
@@ -54,5 +63,6 @@ jobs:
           path: |
             build/ps5-sdl-contract.json
             build/ps5-sdl-contract.txt
+            build/ps5-sdl-gpu-route.txt
           if-no-files-found: error
           retention-days: 7
