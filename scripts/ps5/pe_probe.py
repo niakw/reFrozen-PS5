@@ -89,17 +89,18 @@ def _graphics_profile(imports: list[dict]) -> dict:
     """
     dlls = {item["dll_normalized"] for item in imports}
     detected = []
-    for backend, names in (
-        ("opengl", {"opengl32.dll"}),
-        ("directdraw", {"ddraw.dll"}),
-        ("direct3d8", {"d3d8.dll"}),
-        ("direct3d9", {"d3d9.dll"}),
-        ("direct3d10", {"d3d10.dll", "d3d10_1.dll"}),
-        ("direct3d11", {"d3d11.dll", "dxgi.dll"}),
-        ("direct3d12", {"d3d12.dll", "dxgi.dll"}),
+    for backend, required, auxiliary in (
+        ("opengl", {"opengl32.dll"}, set()),
+        ("directdraw", {"ddraw.dll"}, set()),
+        ("direct3d8", {"d3d8.dll"}, set()),
+        ("direct3d9", {"d3d9.dll"}, set()),
+        ("direct3d10", {"d3d10.dll", "d3d10_1.dll"}, {"dxgi.dll"}),
+        ("direct3d11", {"d3d11.dll"}, {"dxgi.dll"}),
+        ("direct3d12", {"d3d12.dll"}, {"dxgi.dll"}),
     ):
-        matched = sorted(dlls & names)
-        if matched:
+        evidence = sorted(dlls & required)
+        if evidence:
+            matched = sorted(set(evidence) | (dlls & auxiliary))
             detected.append({"backend": backend, "dlls": matched})
 
     if any(item["backend"] == "opengl" for item in detected):
