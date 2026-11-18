@@ -99,12 +99,38 @@ def lift_private(
     repo_root: Path,
     python: str = sys.executable,
     require_pinned_lifter: bool = True,
+    module_name: str | None = None,
+    rebase: int | str | None = None,
 ) -> dict:
     executable = executable.resolve()
     if not executable.is_file():
         raise PrivateLiftError("input executable does not exist")
 
     private_root, output = validate_output(repo_root, output)
+
+    module = None
+    if module_name is not None:
+        module = module_name.strip()
+        if not module or any(ch not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.-" for ch in module):
+            raise PrivateLiftError("module name contains unsupported characters")
+        if module.lower().endswith(".dll"):
+            module = module[:-4]
+        if not module:
+            raise PrivateLiftError("module name is empty after removing .dll")
+
+    rebase_value = None
+    if rebase is not None:
+        try:
+            rebase_value = int(rebase, 0) if isinstance(rebase, str) else int(rebase)
+        except (TypeError, ValueError) as exc:
+            raise PrivateLiftError("rebase must be an integer address") from exc
+        if rebase_value <= 0 or rebase_value >= (1 << 63):
+            raise PrivateLiftError("rebase address is outside supported user address space")
+        if rebase_value & 0xFFFF:
+            raise PrivateLiftError("rebase address must be 64-KiB aligned")
+        if module is None:
+            raise PrivateLiftError("rebase is valid only for a translated module")
+
     lifter, lifter_head = validate_lifter(
         lifter_root, require_pinned=require_pinned_lifter
     )
@@ -128,6 +154,10 @@ def lift_private(
     log_path = output / "translation.log"
 
     command = [python, str(lifter), str(executable), str(generated)]
+    if module is not None:
+        command += ["--module", module]
+        if rebase_value is not None:
+            command += ["--rebase", f"{rebase_value:x}"]
     completed = subprocess.run(
         command,
         cwd=lifter_root,
@@ -156,6 +186,9 @@ def lift_private(
             "version_resource": pe.get("version_resource"),
             "import_dll_count": pe.get("import_dll_count"),
             "import_symbol_count": pe.get("import_symbol_count"),
+            "translation_kind": "module" if module is not None else "executable",
+            "module_name": module,
+            "rebase": f"0x{rebase_value:x}" if rebase_value is not None else None,
         },
         "lifter": {
             "expected_framework_commit": PINNED_NIGHTSIGHT,
@@ -198,10 +231,13 @@ def main() -> int:
         "--output", type=Path,
         default=repo_root / "private" / "warcraft-win64-lift",
     )
+    parser.add_argument("--module", help="translate as a loadable DLL module (name without .dll)")
+    parser.add_argument("--rebase", help="optional 64-KiB aligned module load base")
     args = parser.parse_args()
     try:
         report = lift_private(
-            args.executable, args.lifter_root, args.output, repo_root
+            args.executable, args.lifter_root, args.output, repo_root,
+            module_name=args.module, rebase=args.rebase,
         )
     except (OSError, PrivateLiftError) as exc:
         parser.error(str(exc))
