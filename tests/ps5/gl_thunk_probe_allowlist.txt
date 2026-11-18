@@ -1,0 +1,15 @@
+# Synthetic compatibility-surface probe; not a claim of Warcraft import coverage.
+glBegin
+glEnd
+glVertex3f
+glTexCoord2f
+glColor4ub
+glMatrixMode
+glLoadIdentity
+glOrtho
+glViewport
+glClearColor
+glClear
+glBindTexture
+glTexImage2D
+glGetString
