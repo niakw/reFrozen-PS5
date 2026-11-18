@@ -17,7 +17,7 @@ diff --git a/src/runtime/dispatch.cpp b/src/runtime/dispatch.cpp
 index 00a4af8..0000000 100644
 --- a/src/runtime/dispatch.cpp
 +++ b/src/runtime/dispatch.cpp
-@@ -312,9 +312,13 @@ void FaultHandler(int sig, siginfo_t* si, void* uc) {
+@@ -312,6 +312,10 @@ void FaultHandler(int sig, siginfo_t* si, void* uc) {
    (void)!write(2, buf, size_t(n));
    char name[32] = "?";
 +#if defined(__linux__) || defined(__APPLE__)
@@ -28,7 +28,7 @@ index 00a4af8..0000000 100644
    n = std::snprintf(buf, sizeof buf, "  thread '%s', pc %p, caller:\n", name,
                      reinterpret_cast<void*>(fc.pc));
    (void)!write(2, buf, size_t(n));
-@@ -334,8 +338,8 @@ void InstallSignalStack() {
+@@ -334,7 +338,7 @@ void InstallSignalStack() {
    // handlers for guest faults run lifted code on it, so it is large.
    constexpr size_t kSize = 16u << 20;
    void* p = mmap(nullptr, kSize, PROT_READ | PROT_WRITE,
