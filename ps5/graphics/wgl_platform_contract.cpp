@@ -15,7 +15,8 @@ bool WglRegistry::HandleToSlot(WglHandle handle, std::size_t* slot) noexcept {
 
 bool WglRegistry::ValidateOps() const noexcept {
   return ops_.create_context && ops_.destroy_context && ops_.make_current &&
-         ops_.clear_current && ops_.swap_buffers && ops_.get_proc_address;
+         ops_.clear_current && ops_.swap_buffers && ops_.set_swap_interval &&
+         ops_.get_proc_address;
 }
 
 WglHandle WglRegistry::CreateContext(int profile_mask, WglHandle share) {
@@ -114,6 +115,13 @@ bool WglRegistry::SwapBuffers(DeviceContext dc) {
     return false;
   }
   return ops_.swap_buffers(ops_.user, dc);
+}
+
+bool WglRegistry::SetSwapInterval(int interval) {
+  if (current_.registry != this || current_.slot >= kMaxContexts || !ValidateOps()) {
+    return false;
+  }
+  return ops_.set_swap_interval(ops_.user, interval);
 }
 
 void* WglRegistry::GetProcAddress(const char* name) {
