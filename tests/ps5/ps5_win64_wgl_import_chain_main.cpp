@@ -278,8 +278,12 @@ int main() {
   entry(&state);
 
   const WglHandle expected_handle = WglRegistry::kHandleBase + 1;
+  const std::uint64_t stored_context = data[0];
+  const std::uint64_t stored_proc = data[1];
+  const std::uint64_t stored_swap = data[2];
   const bool guest_ok =
-      data[0] == expected_handle && data[1] == kGuestGlProc && data[2] == 1 &&
+      stored_context == expected_handle && stored_proc == kGuestGlProc &&
+      stored_swap == 1 &&
       state.rax == 1 && state.rsp == initial_rsp + 8 &&
       state.fn == gentry && g_unimplemented_calls == 0 && g_last_error == 0;
   const bool backend_ok =
@@ -305,9 +309,9 @@ int main() {
                  "REFROZEN_PS5_WGL_CHAIN pass=0 stage=execute "
                  "ctx=%llx proc=%llx swap=%llu create=%d current=%d "
                  "swaps=%d clear=%d destroy=%d fallback=%llu last=%u\n",
-                 static_cast<unsigned long long>(data[0]),
-                 static_cast<unsigned long long>(data[1]),
-                 static_cast<unsigned long long>(data[2]),
+                 static_cast<unsigned long long>(stored_context),
+                 static_cast<unsigned long long>(stored_proc),
+                 static_cast<unsigned long long>(stored_swap),
                  backend.create_calls, backend.make_current_calls,
                  backend.swap_calls, backend.clear_calls, backend.destroy_calls,
                  static_cast<unsigned long long>(g_unimplemented_calls),
