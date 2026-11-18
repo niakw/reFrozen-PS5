@@ -9,7 +9,8 @@ from scripts.ps5.pe_probe import (inspect_pe, PEFormatError, _graphics_profile,
                                   _scan_com_guid_markers, _scan_fixed_file_info)
 
 
-def synthetic_pe(machine: int, bits: int) -> bytes:
+def synthetic_pe(machine: int, bits: int, reloc: bool = False,
+                 relocations_stripped: bool = False) -> bytes:
     dos = bytearray(128)
     dos[:2] = b"MZ"
     struct.pack_into("<I", dos, 0x3C, 128)
@@ -19,7 +20,16 @@ def synthetic_pe(machine: int, bits: int) -> bytes:
                      0x400000 if bits == 32 else 0x140000000)
     struct.pack_into("<I", optional, 56, 0x30000)
     struct.pack_into("<H", optional, 68, 2)
-    coff = struct.pack("<HHIIIHH", machine, 1, 123456, 0, 0, len(optional), 0)
+    if reloc:
+        dir_count_off = 92 if bits == 32 else 108
+        dir_base = 96 if bits == 32 else 112
+        struct.pack_into("<I", optional, dir_count_off, 16)
+        struct.pack_into("<II", optional, dir_base + 5 * 8, 0x2000, 0x100)
+    coff_characteristics = 0x0001 if relocations_stripped else 0
+    coff = struct.pack(
+        "<HHIIIHH", machine, 1, 123456, 0, 0, len(optional),
+        coff_characteristics,
+    )
     section = bytearray(40)
     section[:5] = b".text"
     return bytes(dos) + b"PE\0\0" + coff + optional + bytes(section)
@@ -40,6 +50,28 @@ class PEProbeTest(unittest.TestCase):
                 self.assertEqual(result["sections"], [".text"])
                 self.assertIsNone(result["warcraft_version"])
                 self.assertNotIn(str(Path(temp)), str(result))
+
+    def test_relocation_capability_is_explicit(self):
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp) / "reloc64.dll"
+            p.write_bytes(synthetic_pe(0x8664, 64, reloc=True))
+            result = inspect_pe(p)
+            self.assertEqual(result["base_relocation_rva"], 0x2000)
+            self.assertEqual(result["base_relocation_size"], 0x100)
+            self.assertFalse(result["relocations_stripped"])
+            self.assertTrue(result["can_rebase"])
+
+            p.write_bytes(synthetic_pe(
+                0x8664, 64, reloc=True, relocations_stripped=True
+            ))
+            stripped = inspect_pe(p)
+            self.assertTrue(stripped["relocations_stripped"])
+            self.assertFalse(stripped["can_rebase"])
+
+            p.write_bytes(synthetic_pe(0x8664, 64))
+            absent = inspect_pe(p)
+            self.assertEqual(absent["base_relocation_size"], 0)
+            self.assertFalse(absent["can_rebase"])
 
     def test_graphics_profile_is_evidence_based(self):
         opengl = _graphics_profile([

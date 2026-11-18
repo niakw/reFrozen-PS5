@@ -196,8 +196,97 @@ def _local_module_closure(census: dict, entry: dict | None) -> tuple[list[dict],
             "version_resource": item.get("version_resource"),
             "import_dll_count": item.get("import_dll_count"),
             "import_symbol_count": item.get("import_symbol_count"),
+            "relocations_stripped": item.get("relocations_stripped"),
+            "base_relocation_size": item.get("base_relocation_size"),
+            "can_rebase": item.get("can_rebase"),
         })
     return modules, sorted(set(blockers))
+
+
+def _parse_image_base(value: object) -> int | None:
+    try:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            return int(value, 0)
+    except ValueError:
+        return None
+    return None
+
+
+def _align_up(value: int, alignment: int = 0x10000) -> int:
+    return (value + alignment - 1) & ~(alignment - 1)
+
+
+def _plan_module_bases(entry: dict | None, modules: list[dict]) -> tuple[list[dict], list[str]]:
+    if not entry:
+        return modules, ["module address plan unavailable without entry executable"]
+
+    entry_base = _parse_image_base(entry.get("image_base"))
+    entry_size = entry.get("image_size")
+    if entry_base is None or not isinstance(entry_size, int) or entry_size <= 0:
+        return modules, ["entry executable has invalid image base/size"]
+
+    occupied: list[tuple[int, int, str]] = [
+        (entry_base, entry_base + entry_size, str(entry.get("file") or "entry"))
+    ]
+    planned: list[dict] = []
+    blockers: list[str] = []
+
+    def colliders(base: int, size: int) -> list[tuple[int, int, str]]:
+        end = base + size
+        return [
+            region for region in occupied
+            if base < region[1] and region[0] < end
+        ]
+
+    def first_fit(size: int) -> int:
+        candidate = _align_up(0x180000000)
+        while True:
+            hits = colliders(candidate, size)
+            if not hits:
+                return candidate
+            candidate = _align_up(max(end for _, end, _ in hits))
+
+    for module in modules:
+        item = dict(module)
+        preferred = _parse_image_base(item.get("image_base"))
+        size = item.get("image_size")
+        name = str(item.get("relative_file") or item.get("file") or "module")
+        if preferred is None or not isinstance(size, int) or size <= 0:
+            blockers.append(f"local module has invalid image base/size: {name}")
+            item.update({
+                "preferred_image_base": item.get("image_base"),
+                "load_image_base": None,
+                "rebase_required": None,
+            })
+            planned.append(item)
+            continue
+
+        target = preferred
+        hits = colliders(preferred, size)
+        rebase = False
+        if hits:
+            if item.get("can_rebase") is not True:
+                blockers.append(
+                    f"local module base collision cannot be rebased safely: {name} "
+                    f"at 0x{preferred:x} overlaps "
+                    + ", ".join(region[2] for region in hits)
+                )
+            else:
+                target = first_fit(size)
+                rebase = target != preferred
+
+        item.update({
+            "preferred_image_base": f"0x{preferred:x}",
+            "load_image_base": f"0x{target:x}",
+            "rebase_required": rebase,
+            "rebase_arg": f"0x{target:x}" if rebase else None,
+        })
+        occupied.append((target, target + size, name))
+        planned.append(item)
+
+    return planned, sorted(set(blockers))
 
 
 def _renderer(entry: dict | None) -> tuple[dict, list[str]]:
@@ -323,6 +412,8 @@ def build_plan(
     lifter, errors = _lifter(entry)
     blockers += errors
     local_modules, errors = _local_module_closure(census, entry)
+    blockers += errors
+    local_modules, errors = _plan_module_bases(entry, local_modules)
     blockers += errors
     renderer, errors = _renderer(entry)
     blockers += errors

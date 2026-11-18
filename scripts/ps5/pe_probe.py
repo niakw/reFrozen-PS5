@@ -384,7 +384,9 @@ def inspect_pe(path: Path) -> dict:
     coff = _slice(raw, pe_offset, 24, "PE/COFF header")
     if coff[:4] != b"PE\0\0":
         raise PEFormatError("missing PE signature")
-    machine, count, timestamp, _, _, opt_size, _ = struct.unpack_from("<HHIIIHH", coff, 4)
+    machine, count, timestamp, _, _, opt_size, coff_characteristics = struct.unpack_from(
+        "<HHIIIHH", coff, 4
+    )
     if not 1 <= count <= MAX_SECTIONS:
         raise PEFormatError("invalid section count")
     if not 72 <= opt_size <= 4096:
@@ -403,6 +405,20 @@ def inspect_pe(path: Path) -> dict:
     image_size = struct.unpack_from("<I", optional, 56)[0]
     size_of_headers = struct.unpack_from("<I", optional, 60)[0]
     subsystem = struct.unpack_from("<H", optional, 68)[0]
+    dll_characteristics = struct.unpack_from("<H", optional, 70)[0]
+    dir_count_off = 92 if bits == 32 else 108
+    dir_base = 96 if bits == 32 else 112
+    base_relocation_rva = 0
+    base_relocation_size = 0
+    if len(optional) >= dir_count_off + 4:
+        data_directory_count = struct.unpack_from("<I", optional, dir_count_off)[0]
+        reloc_entry = dir_base + 5 * 8
+        if data_directory_count > 5 and len(optional) >= reloc_entry + 8:
+            base_relocation_rva, base_relocation_size = struct.unpack_from(
+                "<II", optional, reloc_entry
+            )
+    relocations_stripped = bool(coff_characteristics & 0x0001)
+    can_rebase = bool(base_relocation_rva and base_relocation_size and not relocations_stripped)
     section_table = optional_offset + opt_size
     sections = []
     for index in range(count):
@@ -437,7 +453,13 @@ def inspect_pe(path: Path) -> dict:
         "image_size": image_size,
         "size_of_headers": size_of_headers,
         "coff_timestamp": timestamp,
+        "coff_characteristics": coff_characteristics,
+        "dll_characteristics": dll_characteristics,
         "subsystem": subsystem,
+        "relocations_stripped": relocations_stripped,
+        "base_relocation_rva": base_relocation_rva,
+        "base_relocation_size": base_relocation_size,
+        "can_rebase": can_rebase,
         "sections": [section["name"] for section in sections],
         "section_details": sections,
         "imports": imports,
