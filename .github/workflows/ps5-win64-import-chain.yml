@@ -1,0 +1,142 @@
+name: PS5 synthetic Win64 IAT import chain
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/synthetic_pe64_import.py'
+      - 'scripts/ps5/build-win64-import-chain-elf.sh'
+      - 'tests/test_ps5_synthetic_pe64_import.py'
+      - 'tests/ps5/ps5_win64_import_handlers.c'
+      - 'tests/ps5/ps5_win64_import_host_shims.cpp'
+      - 'tests/ps5/ps5_win64_import_chain_main.cpp'
+      - '.github/workflows/ps5-win64-import-chain.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  translate-link-import:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install LLVM and translator dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 llvm-18 lld-18 curl unzip file
+          python -m pip install --disable-pip-version-check capstone==5.0.6 lief==0.16.6
+
+      - name: Checkout pinned MIT Win64 translator
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+
+      - name: Validate and translate public import fixture
+        run: |
+          python -m unittest discover -s tests -p 'test_ps5_synthetic_pe64_import.py' -v
+          python scripts/ps5/synthetic_pe64_import.py build/synthetic_win64_import.exe
+          python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_win64_import.exe","build/generated-import"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation-import.log
+          cat build/translation-import.log
+          grep -q "UNSUPPORTED: {}" build/translation-import.log
+          test -s build/generated-import/code_0000.c
+          test -s build/generated-import/tables.c
+          grep -q "I_kernel32_dll_GetTickCount64" build/generated-import/code_0000.c
+          grep -q "kernel32.dll!GetTickCount64" build/generated-import/tables.c
+          grep -q "I_kernel32_dll_GetTickCount64" build/generated-import/tables.c
+
+      - name: Execute translated IAT chain on Linux with PS5 contract shims
+        run: |
+          mkdir -p build/host-import-chain
+          python scripts/ps5/bin2cpp.py build/synthetic_win64_import.exe build/host-import-chain/synthetic_import_pe_blob.cpp --symbol g_refrozen_synthetic_import_pe
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-import -c build/generated-import/code_0000.c -o build/host-import-chain/code.o
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-import -c build/generated-import/tables.c -o build/host-import-chain/tables.o
+          clang -std=gnu11 -O0 -Wall -Wextra -Werror -Ibuild/nightsight/runtime -Ibuild/generated-import -c tests/ps5/ps5_win64_import_handlers.c -o build/host-import-chain/handlers.o
+          clang++ -std=gnu++20 -O0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/host -Ips5/runtime -Ibuild/nightsight/runtime -Ibuild/generated-import \
+            tests/ps5/ps5_win64_import_chain_main.cpp \
+            tests/ps5/ps5_win64_import_host_shims.cpp \
+            build/host-import-chain/synthetic_import_pe_blob.cpp \
+            ps5/runtime/exact_reservation_ps5.cpp \
+            ps5/runtime/direct_guest_backing_ps5.cpp \
+            ps5/runtime/guest_image_mapping_ps5.cpp \
+            build/host-import-chain/code.o build/host-import-chain/tables.o build/host-import-chain/handlers.o \
+            -o build/host-import-chain/import-chain-test
+          ./build/host-import-chain/import-chain-test 2>&1 | tee build/host-import-chain/execution.log
+          grep -q "REFROZEN_PS5_IMPORT_CHAIN pass=1" build/host-import-chain/execution.log
+          grep -q "calls=1 fallback=0" build/host-import-chain/execution.log
+      - name: Download and verify Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/ps5-payload-sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/ps5-payload-sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/ps5-payload-sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+
+      - name: Link PS5 import-chain ELF
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+          NIGHTSIGHT_FW: ${{ github.workspace }}/build/nightsight
+          REFROZEN_GENERATED_DIR: ${{ github.workspace }}/build/generated-import
+          REFROZEN_SYNTHETIC_PE: ${{ github.workspace }}/build/synthetic_win64_import.exe
+        run: |
+          bash scripts/ps5/build-win64-import-chain-elf.sh
+          test -s build/ps5-win64-import-chain/refrozen-synthetic-win64-import-chain.elf
+
+      - name: Inspect import-chain ELF
+        run: |
+          OUT=build/ps5-win64-import-chain
+          ELF="$OUT/refrozen-synthetic-win64-import-chain.elf"
+          file "$ELF" | tee "$OUT/file.txt"
+          llvm-readelf-18 -h -l -d "$ELF" > "$OUT/elf-metadata.txt"
+          llvm-nm-18 "$ELF" > "$OUT/symbols.txt"
+          llvm-nm-18 -u "$ELF" > "$OUT/undefined-symbols.txt" || true
+          sha256sum "$ELF" > "$OUT/SHA256SUMS"
+          grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' "$OUT/elf-metadata.txt"
+          grep -Eq 'Type:.*DYN' "$OUT/elf-metadata.txt"
+          grep -E "[[:space:]][Tt][[:space:]]I_kernel32_dll_GetTickCount64$" "$OUT/symbols.txt"
+          grep -q "g_refrozen_tick_import_calls" "$OUT/symbols.txt"
+          grep -q "g_refrozen_unimplemented_import_calls" "$OUT/symbols.txt"
+          grep -q "gimports" "$OUT/symbols.txt"
+          grep -q "ngimports" "$OUT/symbols.txt"
+          grep -q "REFROZEN_PS5_IMPORT_CHAIN pass=1" <(strings "$ELF")
+          for lib in libkernel_web.sprx libSceLibcInternal.sprx libSceNet.sprx; do
+            grep -Fq "Shared library: [$lib]" "$OUT/elf-metadata.txt"
+          done
+          for symbol in sceKernelAllocateDirectMemory sceKernelGetDirectMemorySize sceKernelMapDirectMemory sceKernelReleaseDirectMemory sceKernelReserveVirtualRange munmap; do
+            grep -q "$symbol" "$OUT/undefined-symbols.txt"
+          done
+          if grep -qE '__atomic_|/lib(64)?/ld-linux|/libexec/ld-elf' "$OUT/undefined-symbols.txt" "$OUT/elf-metadata.txt"; then
+            echo "Unexpected host/atomic runtime dependency" >&2
+            exit 1
+          fi
+          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
+            cat "$OUT/forbidden-strings.txt" >&2
+            exit 1
+          fi
+          cat "$OUT/SHA256SUMS"
+
+      - name: Upload synthetic import-chain proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-ps5-synthetic-win64-import-chain
+          path: |
+            build/ps5-win64-import-chain/refrozen-synthetic-win64-import-chain.elf
+            build/ps5-win64-import-chain/file.txt
+            build/ps5-win64-import-chain/elf-metadata.txt
+            build/ps5-win64-import-chain/undefined-symbols.txt
+            build/ps5-win64-import-chain/SHA256SUMS
+            build/translation-import.log
+          if-no-files-found: error
+          retention-days: 14
