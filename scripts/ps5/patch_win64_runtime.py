@@ -58,7 +58,8 @@ def patch_runtime(runtime: Path) -> None:
     display = runtime / "display.c"
     user32 = runtime / "user32.c"
     dinput = runtime / "dinput.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput)):
+    xaudio2 = runtime / "xaudio2.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput, xaudio2)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -300,6 +301,109 @@ static void set_mouse_capture(int on) {
     captured = on;
     if (rt_ps5_mouse_capture) rt_ps5_mouse_capture(on);
 }
+""",
+    )
+
+
+    # XAudio2's guest-facing engine/mixer is already platform-independent.
+    # Replace only CoreAudio output/pacing with the small blocking sceAudioOut
+    # bridge kept in ps5/runtime.
+    replace_once(
+        xaudio2,
+        """#include "rt.h"
+#include <pthread.h>
+#include <time.h>
+#include <mach/mach_time.h>
+#include <AudioToolbox/AudioToolbox.h>
+""",
+        """#include "rt.h"
+#include "ps5_audio_out_bridge.h"
+#include <pthread.h>
+#include <time.h>
+""",
+    )
+    replace_between_once(
+        xaudio2,
+        "// ---------------- output: CoreAudio unit draining a stereo float ring ----------------",
+        "static uint32_t bytes_needed",
+        """// ---------------- output: PS5 AudioOut bridge ----------------
+static struct refrozen_ps5_audio_out out_dev = { .handle = -1 };
+static int out_open(void) {
+    return refrozen_ps5_audio_out_open(&out_dev) == 0;
+}
+static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+""",
+    )
+    replace_once(
+        xaudio2,
+        """    pthread_setname_np(have_out ? "XAudio2" : "XAudio2 (silent)");
+    rt_log("[xaudio2] output: %s\n", have_out ? "CoreAudio, 48 kHz stereo" : "none (silent timing)");
+    uint64_t next = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+""",
+        """    rt_log("[xaudio2] output: %s\n", have_out ? "PS5 AudioOut, 48 kHz stereo S16" : "none (silent timing)");
+    uint64_t next = monotonic_ns();
+""",
+    )
+    replace_once(
+        xaudio2,
+        """        if (have_out) {   // the device is the clock: keep ~30 ms queued
+            while (ring_w - ring_r >= 3 * PASS_FRAMES) { struct timespec ts = { 0, 2000000 }; nanosleep(&ts, NULL); }
+        } else {
+            next += PASS_NS;
+            uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+""",
+        """        if (!have_out) {
+            next += PASS_NS;
+            uint64_t now = monotonic_ns();
+""",
+    )
+    replace_once(
+        xaudio2,
+        """            if (have_out) { for (int i = 0; i < PASS_FRAMES; i++) { uint64_t j = (ring_w + i) % RING; ring[2 * j] = ring[2 * j + 1] = 0; } ring_w += PASS_FRAMES; }
+            continue;
+""",
+        """            if (have_out && refrozen_ps5_audio_out_silence(&out_dev, PASS_FRAMES) < 0) have_out = 0;
+            continue;
+""",
+    )
+    replace_once(
+        xaudio2,
+        """        if (have_out) {
+            for (int i = 0; i < PASS_FRAMES; i++) {
+                uint64_t j = (ring_w + i) % RING;
+                float l = mix[2 * i], r = mix[2 * i + 1];
+                ring[2 * j] = l > 1 ? 1 : l < -1 ? -1 : l; ring[2 * j + 1] = r > 1 ? 1 : r < -1 ? -1 : r;
+            }
+            ring_w += PASS_FRAMES;
+        }
+
+""",
+        """        if (have_out && refrozen_ps5_audio_out_push_f32(&out_dev, mix, PASS_FRAMES) < 0) {
+            rt_log("[xaudio2] sceAudioOutOutput failed; switching to silent timing\n");
+            refrozen_ps5_audio_out_close(&out_dev);
+            have_out = 0;
+            next = monotonic_ns();
+        }
+
+""",
+    )
+    replace_once(
+        xaudio2,
+        """    return NULL;
+}
+
+// ---------------- IXAudio2Voice (shared by all voice kinds) ----------------
+""",
+        """    if (have_out) refrozen_ps5_audio_out_close(&out_dev);
+    return NULL;
+}
+
+// ---------------- IXAudio2Voice (shared by all voice kinds) ----------------
 """,
     )
 
