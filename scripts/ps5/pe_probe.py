@@ -21,6 +21,33 @@ MAX_EXPORTS = 100_000
 MAX_STRING = 4096
 _MACHINE = {0x014C: "x86", 0x8664: "x86_64", 0xAA64: "arm64"}
 
+# Windows GUIDs are stored in memory with little-endian Data1/Data2/Data3
+# fields followed by the eight Data4 bytes. These markers are evidence that a
+# PE contains/references a COM class/interface, not proof that the code path is
+# executed at runtime.
+_COM_GUID_MARKERS = {
+    "wasapi_mmdevice_enumerator": {
+        "area": "audio",
+        "guid": "BCDE0395-E52F-467C-8E3D-C4579291692E",
+        "bytes": bytes.fromhex("9503debc2fe57c468e3dc4579291692e"),
+    },
+    "xaudio2_27": {
+        "area": "audio",
+        "guid": "5A508685-A254-4FBA-9B82-9A24B00306AF",
+        "bytes": bytes.fromhex("8586505a54a2ba4f9b829a24b00306af"),
+    },
+    "xaudio2_27_debug": {
+        "area": "audio",
+        "guid": "DB05EA35-0329-4D4B-A53A-6DEAD03D3852",
+        "bytes": bytes.fromhex("35ea05db29034b4da53a6dead03d3852"),
+    },
+    "iid_ixaudio2_27": {
+        "area": "audio",
+        "guid": "8BCF1F58-9FE7-4583-8AC6-E2ADC465C8BB",
+        "bytes": bytes.fromhex("581fcf8be79f83458ac6e2adc465c8bb"),
+    },
+}
+
 _RUNTIME_DLL_AREAS = {
     "core": {
         "kernel32.dll", "kernelbase.dll", "ntdll.dll", "advapi32.dll",
@@ -42,6 +69,9 @@ _RUNTIME_DLL_AREAS = {
     "network": {
         "wsock32.dll", "ws2_32.dll", "mswsock.dll", "wininet.dll",
         "winhttp.dll", "iphlpapi.dll", "dnsapi.dll",
+    },
+    "crypto": {
+        "bcrypt.dll", "ncrypt.dll", "crypt32.dll", "secur32.dll",
     },
     "com_media": {
         "ole32.dll", "oleaut32.dll", "uuid.dll", "quartz.dll", "strmiids.dll",
@@ -119,6 +149,39 @@ def _graphics_profile(imports: list[dict]) -> dict:
             "or command-line renderer selection can change the active backend."
         ),
     }
+
+
+def _scan_com_guid_markers(raw: bytes, sections: list[dict]) -> list[dict]:
+    """Find selected Windows COM GUID byte patterns without decoding code.
+
+    Only section names and occurrence counts are reported. File offsets and
+    surrounding bytes intentionally stay local.
+    """
+    found = []
+    for name, meta in _COM_GUID_MARKERS.items():
+        total = 0
+        section_names = []
+        needle = meta["bytes"]
+        for section in sections:
+            raw_offset = section["raw_offset"]
+            raw_size = section["raw_size"]
+            if raw_size <= 0 or raw_offset < 0 or raw_offset >= len(raw):
+                continue
+            end = min(len(raw), raw_offset + raw_size)
+            data = raw[raw_offset:end]
+            count = data.count(needle)
+            if count:
+                total += count
+                section_names.append(section["name"])
+        if total:
+            found.append({
+                "name": name,
+                "area": meta["area"],
+                "guid": meta["guid"],
+                "count": total,
+                "sections": sorted(set(section_names)),
+            })
+    return found
 
 
 def _rva_to_offset(rva: int, sections: list[dict], size_of_headers: int, raw_size: int) -> int:
@@ -316,6 +379,7 @@ def inspect_pe(path: Path) -> dict:
 
     imports = _parse_imports(raw, bits, optional, sections, size_of_headers)
     exports = _parse_exports(raw, bits, optional, sections, size_of_headers)
+    com_guid_markers = _scan_com_guid_markers(raw, sections)
     h = hashlib.sha256(raw).hexdigest()
     return {
         "file": path.name,
@@ -336,6 +400,11 @@ def inspect_pe(path: Path) -> dict:
         "import_dll_count": len(imports),
         "import_symbol_count": sum(item["count"] for item in imports),
         "graphics_profile": _graphics_profile(imports),
+        "com_guid_markers": com_guid_markers,
+        "capability_marker_note": (
+            "Static GUID byte matches are evidence only; a marker can be "
+            "present in unused code/data and does not prove runtime execution."
+        ),
         "warcraft_version": None,
         "version_note": "Hash match against a separately verified release catalog is required",
     }
@@ -354,7 +423,7 @@ def main() -> int:
         except (PEFormatError, OSError) as exc:
             results.append({"file": path.name, "error": str(exc)})
             failed = True
-    report = json.dumps({"schema": 2, "results": results}, indent=2) + "\n"
+    report = json.dumps({"schema": 3, "results": results}, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
