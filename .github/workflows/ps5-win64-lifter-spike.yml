@@ -56,6 +56,7 @@ jobs:
           cat build/translation-memory.log
           test -s build/generated-memory/code_0000.c
           grep -q "void F_140001000" build/generated-memory/code_0000.c
+          grep -q "0x140002000" build/generated-memory/code_0000.c
           grep -q "UNSUPPORTED: {}" build/translation-memory.log
       - name: Execute translated RIP-relative load/store at preferred guest VA
         run: |
