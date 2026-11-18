@@ -1,0 +1,104 @@
+name: PS5 Win32 x86recomp broad compile census
+on:
+  pull_request:
+    paths:
+      - 'patches/x86recomp/**'
+      - 'docs/ps5/WIN32_RUNTIME_PS5_CENSUS.md'
+      - '.github/workflows/ps5-win32-runtime-broad-compile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  broad-compile:
+    runs-on: ubuntu-24.04
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      ENCORE_VENDOR_REF: 1e51d1f3383f149a599e36052aba7d887d4b1f77
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl unzip clang-18 llvm-18
+      - name: Download and verify Payload SDK
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+      - name: Checkout pinned SDL3 header source from Encore vendor
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: ${{ env.ENCORE_VENDOR_REF }}
+          path: build/encore-vendor
+          sparse-checkout: |
+            sources/eden-cpm/sdl3/release-3.4.8/include
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Materialize patched x86recomp runtime
+        run: |
+          git clone --filter=blob:none https://github.com/JTM-rootstorm/x86recomp.git build/x86recomp
+          cd build/x86recomp
+          git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
+          for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do git apply "$patch"; done
+      - name: Syntax-compile every runtime C++ unit for PS5
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set -euo pipefail
+          CC="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          RUNTIME="$GITHUB_WORKSPACE/build/x86recomp/src/runtime"
+          SDL="$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include"
+          OUT="$GITHUB_WORKSPACE/build/win32-broad-census"
+          mkdir -p "$OUT/logs"
+          printf 'file\tstatus\tfirst_error\n' > "$OUT/results.tsv"
+          find "$RUNTIME" -type f \( -name '*.cpp' -o -name '*.cc' \) -print0 | sort -z > "$OUT/files.z"
+          while IFS= read -r -d '' src; do
+            rel="${src#$RUNTIME/}"
+            key="$(printf '%s' "$rel" | tr '/ ' '__')"
+            log="$OUT/logs/$key.log"
+            set +e
+            "$CC" -std=c++20 -O0 -g0 -fsyntax-only               -I"$GITHUB_WORKSPACE/build/x86recomp/src" -I"$SDL"               "$src" >"$log" 2>&1
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              printf '%s\tPASS\t-\n' "$rel" >> "$OUT/results.tsv"
+            else
+              first="$(grep -m1 -E 'fatal error:| error:' "$log" | sed 's/[[:space:]]\+/ /g' | cut -c1-300 || true)"
+              printf '%s\tFAIL\t%s\n' "$rel" "$first" >> "$OUT/results.tsv"
+            fi
+          done < "$OUT/files.z"
+          python3 - <<'PY'
+          import csv
+          from collections import Counter
+          from pathlib import Path
+          rows=list(csv.DictReader(Path("build/win32-broad-census/results.tsv").open(),delimiter="\t"))
+          passed=[r for r in rows if r["status"]=="PASS"]
+          failed=[r for r in rows if r["status"]=="FAIL"]
+          cats=Counter()
+          for r in failed:
+              e=r["first_error"].lower()
+              if "sdl" in e: cats["sdl_headers_or_config"]+=1
+              elif "glslang" in e or "spirv" in e: cats["shader_toolchain_headers"]+=1
+              elif "not found" in e: cats["other_missing_header"]+=1
+              elif "undeclared" in e or "no member named" in e: cats["host_api_or_abi"]+=1
+              else: cats["other_compile"]+=1
+          print(f"WIN32_RUNTIME_BROAD total={len(rows)} pass={len(passed)} fail={len(failed)}")
+          print("failure categories:",dict(cats))
+          print("PASS files:",", ".join(r["file"] for r in passed))
+          print("FAIL first errors:")
+          for r in failed:
+              print(f"  {r['file']}: {r['first_error']}")
+          PY
+      - name: Upload compiler census only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-runtime-broad-compile-census
+          path: |
+            build/win32-broad-census/results.tsv
+            build/win32-broad-census/logs/*.log
+          if-no-files-found: error
+          retention-days: 3
