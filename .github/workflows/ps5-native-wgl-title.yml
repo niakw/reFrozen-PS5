@@ -131,13 +131,19 @@ jobs:
         env:
           PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-pathmap
           PS5_OPENGL_SDK_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
-          MAKEFLAGS: -j2
         run: |
           python3 tools/fetch-sources.py
           export PSBC_JOBS="$(nproc)"
           make sdk-gl46
           ccache --show-stats || true
           (cd "$PS5_OPENGL_SDK_PREFIX" && sha256sum --check --strict manifest.sha256)
+
+      - name: Save installed OpenGL SDK cache
+        if: steps.opengl-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/ps5-opengl-sdk
+          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1-pathmap-v1
 
       - name: Verify installed OpenGL SDK
         run: (cd build/ps5-opengl-sdk && sha256sum --check --strict manifest.sha256)
@@ -149,7 +155,7 @@ jobs:
           REFROZEN_OPENGL_SOURCE_ROOT: ${{ github.workspace }}/build/opengl-source
           REFROZEN_NATIVE_TEMPLATE: ${{ github.workspace }}/build/encore-vendor/sources/opengl-native-boilerplate
           BUILD_JOBS: '2'
-          USE_CCACHE: '0'
+          USE_CCACHE: '1'
         run: bash scripts/ps5/build-native-wgl-title.sh
 
       - name: Inspect package and preserve exact receipt
