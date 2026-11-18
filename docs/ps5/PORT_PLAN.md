@@ -24,6 +24,8 @@ A user-owned private install's **metadata-only** PE census completed on private 
 
 The selected **first functional port target is now the existing 1.26a 32-bit reFrozen pipeline**. This does not cancel later independent compatibility work for 1.28/1.29/1.31 or the historical custom maps that need them.
 
+**Do not confuse the two candidate runtimes:** the 21-unit PS5 Win64 object aggregate is built from NightSight's Win64 runtime and does **not** execute reFrozen's PE32/x86recomp-generated Warcraft 1.26a code. For 1.26a we must separately connect the patched x86recomp Win32 HLE/guest-memory runtime to PS5 host adapters (files, timing, display/input, audio, Win32 WGL/GL and launch). Shared PS5 native backing/audio/graphics implementations are reuse candidates, not ABI-compatible Win32 dispatchers by default. No `war3.exe`-derived C++ has been linked to PS5 yet.
+
 Use `scripts/ps5/verify_refrozen_126a_input.py` on a private census report to require the four exact hashes, two executable version resources, the expected PE32 architecture and all 11 input module paths. It distinguishes `ready_for_lifter` from `ready_for_game_launch`.
 
 Two full-size MPQ assets are tracked in the private repository via Git LFS. A metadata checkout intentionally left their small pointer files in place; their actual LFS availability and MPQ contents are **not yet validated**, so a gameplay launch is not approved by this check. Other seven module SHA-256 values are also not individually pinned by this checker.
