@@ -36,7 +36,8 @@ def patch_rt(runtime: Path) -> None:
 #include <crt_externs.h>
 #include <unistd.h>
 """,
-        """#include <sys/ucontext.h>
+        """#include <dlfcn.h>
+#include <sys/ucontext.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -205,6 +206,27 @@ void rt_reexec_fixed_layout(char **argv) {
 void rt_reexec_fixed_layout(char **argv) { (void)argv; }
 """,
     )
+
+
+    replace_once(
+        rt,
+        """    uint64_t pc = u->uc_mcontext->__ss.__pc, lr = u->uc_mcontext->__ss.__lr;
+    Dl_info di;
+    if (dladdr((void *)pc, &di) && di.dli_sname) rt_log("[rt] native pc in %s+0x%llx\\n", di.dli_sname, (unsigned long long)(pc - (uint64_t)di.dli_saddr));
+    if (dladdr((void *)lr, &di) && di.dli_sname) rt_log("[rt] native lr in %s+0x%llx\\n", di.dli_sname, (unsigned long long)(lr - (uint64_t)di.dli_saddr));
+""",
+        """    uint64_t pc = (uint64_t)u->uc_mcontext.mc_rip;
+    uint64_t native_sp = (uint64_t)u->uc_mcontext.mc_rsp;
+    Dl_info di;
+    if (dladdr((void *)pc, &di) && di.dli_sname)
+        rt_log("[rt] native pc in %s+0x%llx\\n", di.dli_sname,
+               (unsigned long long)(pc - (uint64_t)di.dli_saddr));
+    else
+        rt_log("[rt] native pc=0x%llx\\n", (unsigned long long)pc);
+    rt_log("[rt] native rsp=0x%llx\\n", (unsigned long long)native_sp);
+""",
+    )
+
 
 
 def main() -> int:
