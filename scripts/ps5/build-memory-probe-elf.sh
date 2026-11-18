@@ -20,6 +20,7 @@ mkdir -p "$OUTDIR"
   -fdebug-prefix-map="$ROOT/=source/" \
   -ffile-prefix-map="$SDK/=sdk/" \
   -fdebug-prefix-map="$SDK/=sdk/" \
+  -fdebug-compilation-dir=source \
   -Wall -Wextra -Werror -Wpedantic -Wconversion \
   -I"$ROOT/ps5/host" -I"$ROOT/ps5/runtime" \
   "$ROOT/tests/ps5/ps5_guest_memory_probe_main.cpp" \
