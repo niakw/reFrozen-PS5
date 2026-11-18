@@ -5,18 +5,18 @@
 #include "guest_image_mapping_ps5.hpp"
 #include "pe_image_materializer.hpp"
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+
 extern "C" {
 #include "cpu.h"
 void F_140001000(CPU* c);
 extern const unsigned char g_refrozen_synthetic_pe[];
 extern const std::size_t g_refrozen_synthetic_pe_size;
 }
-
-#include <array>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
-#include <span>
 
 namespace {
 constexpr std::uint64_t kBase = 0x140000000ULL;
