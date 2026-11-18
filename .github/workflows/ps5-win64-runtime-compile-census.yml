@@ -112,6 +112,11 @@ jobs:
           nm build/runtime-first-launch/first-launch-runtime.o > build/runtime-first-launch/symbols.txt
           echo "== unresolved aggregate symbols =="
           cat build/runtime-first-launch/undefined-symbols.txt
+          if grep -Eq ' U (cocoa_|gamepad_|rt_last_surface_hwnd$|rt_request_screenshot$|rt_vk_(skip_next|snapshot_request)$)' \
+              build/runtime-first-launch/undefined-symbols.txt; then
+            echo "macOS/Vulkan-only frontend symbols still leak into first-launch runtime" >&2
+            exit 1
+          fi
       - name: Upload compiler evidence
         uses: actions/upload-artifact@v4
         with:
