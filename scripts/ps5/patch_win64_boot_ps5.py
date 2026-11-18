@@ -80,9 +80,24 @@ static int is_game_dir(const char *d) {
     return access(p, R_OK) == 0;
 }
 static char *find_game_dir(void) {
+    // A registered PS5 title cannot rely on a shell environment. Let the
+    // frontend override the location, keep the development env override, then
+    // try the private packaged-data convention used by reFrozen.
+    extern const char *rt_ps5_game_dir(void) __attribute__((weak));
+    if (rt_ps5_game_dir) {
+        const char *frontend = rt_ps5_game_dir();
+        if (frontend && is_game_dir(frontend)) return strdup(frontend);
+    }
     const char *env = rt_game_env("GAME_DIR");
     if (env && is_game_dir(env)) return strdup(env);
-    rt_log("[boot] PS5 game directory not configured; set %s_GAME_DIR or pass EXE and DIR arguments\n",
+    static const char *const candidates[] = {
+        "/app0/game",
+        "/data/refrozen/game",
+        NULL
+    };
+    for (int i = 0; candidates[i]; i++)
+        if (is_game_dir(candidates[i])) return strdup(candidates[i]);
+    rt_log("[boot] PS5 game directory not found; provide frontend path, %s_GAME_DIR, /app0/game or /data/refrozen/game\n",
            rt_game.env_prefix);
     return NULL;
 }
