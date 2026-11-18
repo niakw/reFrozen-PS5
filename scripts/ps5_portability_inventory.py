@@ -15,7 +15,7 @@ PATTERNS = {
     "arm64_assumptions": r"(__aarch64__|__arm64__|arm64|aarch64|NEON)",
     "unix_dynamic_loading": r"\b(dlopen|dlsym|dlerror|RTLD_NOW|RTLD_LOCAL)\b",
     "unix_system_calls": r"\b(mmap|munmap|mprotect|pthread_|sigaction|clock_gettime|mach_)\b",
-    "graphics": r"\b(OpenGL|opengl|GL_[A-Z_0-9]+|Vulkan|SDL_GL_|Direct3D)\b",
+    "graphics": r"\b(OpenGL|opengl|GL_[A-Z_0-9]+|Vulkan|SDL_GL_[A-Za-z0-9_]*|Direct3D)\b",
     "audio": r"\b(DirectSound|SDL_Audio|waveOut|Miles)\b",
     "network": r"\b(wsock32|WSA[A-Za-z0-9_]+|socket\(|sendto\(|recvfrom\()",
     "build_host_paths": r"(/opt/homebrew|/usr/local/opt|CMAKE_OSX|Darwin|MACOSX)",
