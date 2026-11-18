@@ -19,15 +19,13 @@ int main() {
       registry.CreateContext(kWglContextCompatibilityProfileBit, 0);
   if (!context) {
     std::fprintf(stderr,
-                 "REFROZEN_PS5_REAL_EGL pass=0 stage=create egl=0x%x\n",
-                 static_cast<unsigned>(backend.LastError()));
+                 "REFROZEN_PS5_REAL_EGL pass=0 stage=create\n");
     return 1;
   }
   constexpr DeviceContext kFullscreenDc = UINT64_C(0x1111);
   if (!registry.MakeCurrent(kFullscreenDc, context)) {
     std::fprintf(stderr,
-                 "REFROZEN_PS5_REAL_EGL pass=0 stage=current egl=0x%x\n",
-                 static_cast<unsigned>(backend.LastError()));
+                 "REFROZEN_PS5_REAL_EGL pass=0 stage=current\n");
     return 1;
   }
 
@@ -38,9 +36,8 @@ int main() {
   const bool pass = gl_get_string && swap_ok && clear_ok && delete_ok;
 
   std::fprintf(stderr,
-               "REFROZEN_PS5_REAL_EGL pass=%d proc=%p swap=%d clear=%d delete=%d egl=0x%x\n",
+               "REFROZEN_PS5_REAL_EGL pass=%d proc=%p swap=%d clear=%d delete=%d\n",
                pass ? 1 : 0, gl_get_string, swap_ok ? 1 : 0,
-               clear_ok ? 1 : 0, delete_ok ? 1 : 0,
-               static_cast<unsigned>(backend.LastError()));
+               clear_ok ? 1 : 0, delete_ok ? 1 : 0);
   return pass ? 0 : 1;
 }
