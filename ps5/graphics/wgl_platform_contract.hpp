@@ -28,6 +28,7 @@ struct WglBackendOps {
                        DeviceContext dc){};
   bool (*clear_current)(void* user){};
   bool (*swap_buffers)(void* user, DeviceContext dc){};
+  bool (*set_swap_interval)(void* user, int interval){};
   void* (*get_proc_address)(void* user, const char* name){};
 };
 
@@ -51,6 +52,7 @@ class WglRegistry {
   [[nodiscard]] DeviceContext CurrentDeviceContext() const noexcept;
 
   [[nodiscard]] bool SwapBuffers(DeviceContext dc);
+  [[nodiscard]] bool SetSwapInterval(int interval);
   [[nodiscard]] void* GetProcAddress(const char* name);
 
   [[nodiscard]] std::size_t LiveContextCount() const;
