@@ -5,7 +5,7 @@ enable_testing()
 
 add_executable(guest32_ranges_test guest32_ranges_test.cpp)
 target_compile_features(guest32_ranges_test PRIVATE cxx_std_20)
-target_include_directories(guest32_ranges_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../..")
+target_include_directories(guest32_ranges_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/host")
 if(MSVC)
   target_compile_options(guest32_ranges_test PRIVATE /W4 /WX)
 else()
