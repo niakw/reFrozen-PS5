@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - 'scripts/ps5/compile-win64-runtime-census.sh'
-      - 'patches/win64recomp/**'
+      - 'scripts/ps5/patch_win64_runtime.py'
       - '.github/workflows/ps5-win64-runtime-compile-census.yml'
   workflow_dispatch:
 permissions:
@@ -24,11 +24,8 @@ jobs:
           ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
           path: build/nightsight
           persist-credentials: false
-      - name: Apply PS5 portability patches to pinned runtime
-        run: |
-          for patch in patches/win64recomp/*.patch; do
-            git -C build/nightsight apply "$GITHUB_WORKSPACE/$patch"
-          done
+      - name: Apply fail-closed PS5 portability edits
+        run: python scripts/ps5/patch_win64_runtime.py build/nightsight/runtime
       - name: Download and verify Payload SDK
         run: |
           mkdir -p build/sdk-download build/sdk-root
