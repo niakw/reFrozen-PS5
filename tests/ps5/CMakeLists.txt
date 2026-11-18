@@ -146,7 +146,8 @@ if(REFROZEN_EGL_BACKEND_CHECK)
 
   add_library(wgl_egl_backend_compile OBJECT
               "../../ps5/graphics/wgl_platform_contract.cpp"
-              "../../ps5/graphics/wgl_egl_backend_ps5.cpp")
+              "../../ps5/graphics/wgl_egl_backend_ps5.cpp"
+              "../../ps5/graphics/win64_graphics_bootstrap_ps5.cpp")
   target_compile_features(wgl_egl_backend_compile PRIVATE cxx_std_20)
   target_include_directories(wgl_egl_backend_compile PRIVATE
                              "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/graphics")
