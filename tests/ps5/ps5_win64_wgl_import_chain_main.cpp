@@ -158,6 +158,14 @@ const GSection* FindSection(std::string_view name) {
 
 std::uint64_t g_unimplemented_calls = 0;
 std::uint32_t g_last_error = 0;
+std::uint32_t g_observed_proc_count = 0;
+std::array<char, 64> g_observed_proc{};
+
+void ObserveGuestGlProc(const char* name) {
+  ++g_observed_proc_count;
+  std::snprintf(g_observed_proc.data(), g_observed_proc.size(), "%s",
+                name ? name : "");
+}
 
 }  // namespace
 
@@ -260,6 +268,9 @@ int main() {
   WglRegistry registry(ops);
   InstallWglRegistry(&registry);
   InstallGuestGlProcResolver(ResolveGuestGlProc);
+  g_observed_proc_count = 0;
+  g_observed_proc.fill('\0');
+  InstallGuestGlProcObserver(ObserveGuestGlProc);
 
   const std::uint64_t initial_rsp =
       gimage_base + static_cast<std::uint64_t>(mapping.backing.mapped_size) -
@@ -285,7 +296,9 @@ int main() {
       stored_context == expected_handle && stored_proc == kGuestGlProc &&
       stored_swap == 1 &&
       state.rax == 1 && state.rsp == initial_rsp + 8 &&
-      state.fn == gentry && g_unimplemented_calls == 0 && g_last_error == 0;
+      state.fn == gentry && g_unimplemented_calls == 0 && g_last_error == 0 &&
+      g_observed_proc_count == 1 &&
+      std::strcmp(g_observed_proc.data(), "glGetString") == 0;
   const bool backend_ok =
       backend.args_ok && backend.create_calls == 1 &&
       backend.make_current_calls == 1 && backend.swap_calls == 1 &&
@@ -297,6 +310,7 @@ int main() {
       registry.ClearCurrent() && registry.DeleteContext(expected_handle) &&
       backend.clear_calls == 1 && backend.destroy_calls == 1 &&
       registry.LiveContextCount() == 0;
+  InstallGuestGlProcObserver(nullptr);
   InstallGuestGlProcResolver(nullptr);
   InstallWglRegistry(nullptr);
 
@@ -308,14 +322,17 @@ int main() {
     std::fprintf(stderr,
                  "REFROZEN_PS5_WGL_CHAIN pass=0 stage=execute "
                  "ctx=%llx proc=%llx swap=%llu create=%d current=%d "
-                 "swaps=%d clear=%d destroy=%d fallback=%llu last=%u\n",
+                 "swaps=%d clear=%d destroy=%d fallback=%llu last=%u "
+                 "observed=%u name=%s\n",
                  static_cast<unsigned long long>(stored_context),
                  static_cast<unsigned long long>(stored_proc),
                  static_cast<unsigned long long>(stored_swap),
                  backend.create_calls, backend.make_current_calls,
                  backend.swap_calls, backend.clear_calls, backend.destroy_calls,
                  static_cast<unsigned long long>(g_unimplemented_calls),
-                 static_cast<unsigned>(g_last_error));
+                 static_cast<unsigned>(g_last_error),
+                 static_cast<unsigned>(g_observed_proc_count),
+                 g_observed_proc.data());
     return 1;
   }
 

@@ -14,6 +14,7 @@ namespace {
 
 std::atomic<WglRegistry*> g_registry{nullptr};
 std::atomic<GuestGlProcResolver> g_gl_resolver{nullptr};
+std::atomic<GuestGlProcObserver> g_gl_observer{nullptr};
 std::atomic<int> g_swap_interval{1};
 
 WglRegistry* Registry() noexcept {
@@ -165,6 +166,8 @@ WglRegistry* InstalledWglRegistry() noexcept {
 
 std::uint64_t ResolveGuestWglProc(const char* name) {
   if (!name || !*name) return 0;
+  if (const auto observer = g_gl_observer.load(std::memory_order_acquire))
+    observer(name);
   for (const auto& proc : kWglProcs) {
     if (std::strcmp(proc.name, name) == 0) {
       return rt_host_fn(proc.function, proc.name);
@@ -180,6 +183,10 @@ void InstallWglRegistry(WglRegistry* registry) noexcept {
 
 void InstallGuestGlProcResolver(GuestGlProcResolver resolver) noexcept {
   g_gl_resolver.store(resolver, std::memory_order_release);
+}
+
+void InstallGuestGlProcObserver(GuestGlProcObserver observer) noexcept {
+  g_gl_observer.store(observer, std::memory_order_release);
 }
 
 }  // namespace refrozen::ps5::graphics
