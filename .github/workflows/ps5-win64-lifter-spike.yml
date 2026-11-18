@@ -8,6 +8,8 @@ on:
       - 'tests/test_ps5_synthetic_pe64_memory.py'
       - 'tests/ps5/win64_lift_runtime_test.c'
       - 'tests/ps5/win64_identity_memory_test.c'
+      - 'tests/ps5/win64_materialized_image_test.cpp'
+      - 'ps5/host/pe_image_materializer.hpp'
       - '.github/workflows/ps5-win64-lifter-spike.yml'
   workflow_dispatch:
 permissions:
@@ -63,6 +65,10 @@ jobs:
           clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-memory -c build/generated-memory/code_0000.c -o build/generated-memory/synthetic-memory-lift.o
           clang -std=gnu11 -O0 -Ibuild/nightsight/runtime -Ibuild/generated-memory tests/ps5/win64_identity_memory_test.c build/generated-memory/synthetic-memory-lift.o -o build/synthetic-memory-test
           ./build/synthetic-memory-test
+      - name: Materialize whole synthetic PE at preferred VA and execute translated code
+        run: |
+          clang++ -std=gnu++20 -O0 -Ips5/host -Ibuild/nightsight/runtime -Ibuild/generated-memory tests/ps5/win64_materialized_image_test.cpp build/generated-memory/synthetic-memory-lift.o -o build/synthetic-materialized-image-test
+          ./build/synthetic-materialized-image-test build/synthetic_win64_memory.exe
       - name: Preserve synthetic-lift evidence
         if: always()
         uses: actions/upload-artifact@v4
