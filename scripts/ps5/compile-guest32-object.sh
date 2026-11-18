@@ -19,7 +19,8 @@ done
 BUILD="$ROOT/build/ps5-sdk-smoke"
 cmake -S "$ROOT/tests/ps5" -B "$BUILD" \
   -DCMAKE_TOOLCHAIN_FILE="$ROOT/ps5/toolchain/ps5-payload.cmake" \
-  -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
+  -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON \
+  -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build "$BUILD" --target \
   guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile \
   pe_image_materializer_compile direct_guest_backing_compile guest_image_mapping_compile \
