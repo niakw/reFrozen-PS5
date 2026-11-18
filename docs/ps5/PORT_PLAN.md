@@ -32,15 +32,25 @@ A PS5-native **static recompilation**, not Wine, of the user's own Warcraft III:
 - [x] Inventory CI green on the research PR; regex results are triage hints, not a runtime audit.
 - [x] Initial source-level Encore reuse candidate list (`ENCORE_REUSE.md`); SDK integration and license checks remain open.
 - [x] Add platform-neutral 32-bit guest image-range bounds/overlap tests; compiled on Linux/macOS.
-- [ ] Integrate the checks into the actual x86recomp memory manager and add Win32 API conformance tests.
+- [x] Add exact guest-address/mapping contracts and synthetic PS5 memory/link probes for the Win64 candidate; the original 1.26a x86recomp path remains separately version-specific.
 - [x] Compile a synthetic C++20 host fixture on Linux and macOS with strict warnings.
-- [ ] Compile **actual lifter-generated code** from a synthetic PE fixture on native x86-64, without original game data.
-- [ ] Compile that fixture with the confirmed PS5 toolchain and inspect ELF/imports.
-- [ ] Only then attempt the full game with user-owned files and console testing.
+- [x] Compile actual Win64 lifter-generated code from synthetic PE fixtures and execute/inspect the translated import/memory/WGL chains without original game data.
+- [x] Cross-compile/link synthetic translated fixtures with Payload SDK v0.42 and inspect x86-64 PS5 ELF/import evidence.
+- [ ] Qualify the registered reFrozen WGL/OpenGL probe on real PS5 hardware, then audit and lift the user's exact Warcraft Classic files privately.
 
 ## Local user-owned binary architecture probe
 
 Run `python3 scripts/ps5/pe_probe.py /path/to/war3.exe /path/to/Game.dll` locally when files become available. The script outputs PE machine, PE32/PE32+, image base, sections, SHA-256 and file basename; it does **not** read CD keys, execute code, upload files, or infer a Warcraft patch version without a validated hash catalog. CI uses only synthetic PE fixtures. Logs should not include full local install paths.
+
+## Current PS5 port state — 2026-11-18
+
+- Win64 candidate runtime: **21/23 C translation units compile for PS5**. The only compiler-red upstream units are the macOS Steam bridge and macOS Vulkan loader; neither is in the selected first offline/LAN OpenGL route.
+- Native audio: XAudio2 and WASAPI route through the PS5 `sceAudioOut` bridge.
+- Input/display: DirectInput, display and user32 no longer depend on CoreGraphics/AppKit for the PS5 build.
+- Crypto: bcrypt/CommonCrypto is adapted to the pinned PacBrew OpenSSL family and has host semantic tests plus PS5 compiler evidence.
+- Graphics: synthetic Win64 guest WGL calls already reach the reFrozen WGL registry/EGL backend. PR #55 is the exact audited PS5 OpenGL SDK link gate; PR #60 packages the registered `PPSA99006` hardware probe.
+- Private-game audit: `scripts/ps5/private-install-runtime-audit.sh` scans user-owned PE files locally, reports architecture/import/runtime gaps and feeds a fail-closed first-launch gate without uploading game bytes.
+- **No Warcraft executable has yet been lifted in this repository and no reFrozen graphics probe has yet been qualified on the user's PS5.**
 
 ## Critical blockers / unknowns
 - Exact PS5 homebrew SDK capabilities for the user's firmware and installed loader.
