@@ -71,6 +71,11 @@ class RuntimeGapReportTest(unittest.TestCase):
                     "file": "classic64.exe",
                     "machine": "x86_64",
                     "pe_bits": 64,
+                    "version_resource": {
+                        "file_version": "1.31.1.12164",
+                        "product_version": "1.31.1.12164",
+                        "trust": "advisory_metadata_sha256_remains_authoritative",
+                    },
                     "imports": [{
                         "dll": "KERNEL32.dll",
                         "dll_normalized": "kernel32.dll",
@@ -172,6 +177,8 @@ class RuntimeGapReportTest(unittest.TestCase):
             report = build_gap_report(census, root)
             module = report["modules"][0]
             self.assertEqual(report["schema"], 3)
+            self.assertEqual(module["version_resource"]["file_version"],
+                             "1.31.1.12164")
             self.assertEqual(module["imports"][0]["runtime_area"], "crypto")
             self.assertEqual(module["capability_markers"][0]["name"], "xaudio2_27")
             self.assertNotIn(str(Path(temp)), str(report))
