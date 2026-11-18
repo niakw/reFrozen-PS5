@@ -57,6 +57,25 @@ It mirrors the upstream hardware-gate integration:
 
 Raw `elfldr` execution is intentionally out of scope for this graphics gate.
 
+
+## Hardware receipt verification
+
+After running the installed `PPSA99006` title, copy `/download0/ps5-opengl.log` and validate the **last** terminal receipt:
+
+```sh
+python3 scripts/ps5/verify-wgl-title-receipt.py /path/to/ps5-opengl.log
+```
+
+For an exact artifact check, also point the verifier at the same `eboot.bin` that was installed and the SHA-256 from the CI build receipt:
+
+```sh
+python3 scripts/ps5/verify-wgl-title-receipt.py /path/to/ps5-opengl.log \
+  --eboot /path/to/PPSA99006/eboot.bin \
+  --expected-sha256 <CI_EBOOT_SHA256>
+```
+
+The verifier requires the final receipt to report `pass=1`, exactly 120 presented frames, non-zero surface dimensions and successful context clear/delete. Older lines in an accumulated log are retained for context, but the final hardware receipt is authoritative.
+
 ## Acceptance
 
 A successful CI package proves only that the title folder is reproducible and
