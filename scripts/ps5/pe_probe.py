@@ -81,6 +81,45 @@ def _runtime_area(dll: str) -> str:
     return "unknown"
 
 
+def _graphics_profile(imports: list[dict]) -> dict:
+    """Classify only statically imported graphics DLLs.
+
+    Games may LoadLibrary a renderer later, so absence here is never proof
+    that a backend is unsupported or unused.
+    """
+    dlls = {item["dll_normalized"] for item in imports}
+    detected = []
+    for backend, names in (
+        ("opengl", {"opengl32.dll"}),
+        ("directdraw", {"ddraw.dll"}),
+        ("direct3d8", {"d3d8.dll"}),
+        ("direct3d9", {"d3d9.dll"}),
+        ("direct3d10", {"d3d10.dll", "d3d10_1.dll"}),
+        ("direct3d11", {"d3d11.dll", "dxgi.dll"}),
+        ("direct3d12", {"d3d12.dll", "dxgi.dll"}),
+    ):
+        matched = sorted(dlls & names)
+        if matched:
+            detected.append({"backend": backend, "dlls": matched})
+
+    if any(item["backend"] == "opengl" for item in detected):
+        ps5_initial_route = "opengl_wgl_to_ps5_egl"
+    elif detected:
+        ps5_initial_route = "renderer_translation_or_runtime_forcing_required"
+    else:
+        ps5_initial_route = "undetermined_dynamic_renderer_possible"
+
+    return {
+        "static_backends": detected,
+        "ps5_initial_route": ps5_initial_route,
+        "confidence": "imports_only",
+        "note": (
+            "Static imports are evidence only; runtime LoadLibrary/GetProcAddress "
+            "or command-line renderer selection can change the active backend."
+        ),
+    }
+
+
 def _rva_to_offset(rva: int, sections: list[dict], size_of_headers: int, raw_size: int) -> int:
     if rva < size_of_headers:
         if rva >= raw_size:
@@ -295,6 +334,7 @@ def inspect_pe(path: Path) -> dict:
         "export_symbol_count": len(exports),
         "import_dll_count": len(imports),
         "import_symbol_count": sum(item["count"] for item in imports),
+        "graphics_profile": _graphics_profile(imports),
         "warcraft_version": None,
         "version_note": "Hash match against a separately verified release catalog is required",
     }
