@@ -24,3 +24,4 @@ endfunction()
 
 add_guest_layout_fixture(guest32_ranges)
 add_guest_layout_fixture(guest64_ranges)
+add_guest_layout_fixture(exact_guest_reservation)
