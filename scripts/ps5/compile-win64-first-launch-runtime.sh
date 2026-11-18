@@ -95,6 +95,13 @@ if [[ "$count" -ne 22 ]]; then
   echo "unexpected first-launch object count: $count (expected 22)" >&2
   exit 1
 fi
-printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s excluded=steam.c,vulkan.c\n' "$count" \
+
+# Relocatable aggregation catches duplicate definitions and incompatible PS5
+# object formats while intentionally leaving libc/platform/game imports unresolved.
+mapfile -t OBJECTS < "$OUT/objects.list"
+"$CC" -r "${OBJECTS[@]}" -o "$OUT/first-launch-runtime.o"
+test -s "$OUT/first-launch-runtime.o"
+
+printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
   | tee "$OUT/receipt.txt"
 printf '%s\n' "$OUT/objects.list"
