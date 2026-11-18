@@ -27,7 +27,8 @@ typedef void *GLsync;
 typedef void (APIENTRYP GLDEBUGPROC)(GLenum, GLenum, GLuint, GLenum, GLsizei,
                                      const char *, const void *);
 
-GLAPI void GLAPIENTRY glBegin(GLenum mode);\nGLAPI void APIENTRY glClear(GLbitfield mask);
+GLAPI void GLAPIENTRY glBegin(GLenum mode);
+GLAPI void APIENTRY glClear(GLbitfield mask);
 GLAPI void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
 GLAPI void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h);
 GLAPI void APIENTRY glDepthRange(GLdouble nearValue, GLdouble farValue);
