@@ -20,7 +20,6 @@ WglRegistry* Registry() noexcept {
   return g_registry.load(std::memory_order_acquire);
 }
 
-constexpr std::uint32_t kErrorInvalidPixelFormat = 2000;
 
 constexpr char kWglExtensions[] =
     "WGL_ARB_extensions_string WGL_EXT_extensions_string "
@@ -160,6 +159,21 @@ constexpr GuestProc kWglProcs[] = {
 
 }  // namespace
 
+WglRegistry* InstalledWglRegistry() noexcept {
+  return Registry();
+}
+
+std::uint64_t ResolveGuestWglProc(const char* name) {
+  if (!name || !*name) return 0;
+  for (const auto& proc : kWglProcs) {
+    if (std::strcmp(proc.name, name) == 0) {
+      return rt_host_fn(proc.function, proc.name);
+    }
+  }
+  const auto resolver = g_gl_resolver.load(std::memory_order_acquire);
+  return resolver ? resolver(name) : 0;
+}
+
 void InstallWglRegistry(WglRegistry* registry) noexcept {
   g_registry.store(registry, std::memory_order_release);
 }
@@ -173,14 +187,14 @@ void InstallGuestGlProcResolver(GuestGlProcResolver resolver) noexcept {
 extern "C" {
 
 void I_opengl32_dll_wglCreateContext(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   RET(registry ? registry->CreateContext(
                      refrozen::ps5::graphics::kWglContextCompatibilityProfileBit)
                : 0);
 }
 
 void I_opengl32_dll_wglDeleteContext(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   if (!registry) {
     RET(0);
     return;
@@ -194,7 +208,7 @@ void I_opengl32_dll_wglDeleteContext(CPU* c) {
 }
 
 void I_opengl32_dll_wglMakeCurrent(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   if (!registry) {
     RET(0);
     return;
@@ -212,23 +226,23 @@ void I_opengl32_dll_wglMakeCurrent(CPU* c) {
 }
 
 void I_opengl32_dll_wglGetCurrentContext(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   RET(registry ? registry->CurrentContext() : 0);
 }
 
 void I_opengl32_dll_wglGetCurrentDC(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   RET(registry ? registry->CurrentDeviceContext() : 0);
 }
 
 void I_opengl32_dll_wglShareLists(CPU* c) {
   // The PS5 EGL backend creates every context in one share group. Keep this
   // successful no-op behavior aligned with the existing NightSight runtime.
-  RET(refrozen::ps5::graphics::Registry() ? 1 : 0);
+  RET(refrozen::ps5::graphics::InstalledWglRegistry() ? 1 : 0);
 }
 
 void I_gdi32_dll_SwapBuffers(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   RET(registry && registry->SwapBuffers(A0) ? 1 : 0);
 }
 
@@ -275,23 +289,14 @@ void I_opengl32_dll_wglDescribePixelFormat(CPU* c) {
 }
 
 void I_opengl32_dll_wglGetProcAddress(CPU* c) {
-  auto* registry = refrozen::ps5::graphics::Registry();
+  auto* registry = refrozen::ps5::graphics::InstalledWglRegistry();
   const char* name = static_cast<const char*>(PTR(A0));
   if (!registry || !registry->CurrentContext() || !name || !*name) {
     RET(0);
     return;
   }
 
-  for (const auto& proc : refrozen::ps5::graphics::kWglProcs) {
-    if (std::strcmp(proc.name, name) == 0) {
-      RET(rt_host_fn(proc.function, strdup(name)));
-      return;
-    }
-  }
-
-  const auto resolver =
-      refrozen::ps5::graphics::g_gl_resolver.load(std::memory_order_acquire);
-  RET(resolver ? resolver(name) : 0);
+  RET(refrozen::ps5::graphics::ResolveGuestWglProc(name));
 }
 
 }  // extern "C"
