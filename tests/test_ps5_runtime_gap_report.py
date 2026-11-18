@@ -42,7 +42,48 @@ class RuntimeGapReportTest(unittest.TestCase):
             self.assertEqual([x["reference_status"] for x in symbols],
                              ["reference_hle", "unmapped", "ordinal_needs_manual"])
             self.assertTrue(all(x["ps5_status"] == "unverified" for x in symbols))
+            self.assertTrue(all("resolved_name" in x for x in symbols))
             self.assertEqual(report["missing_by_dll"], {"kernel32.dll": ["CreateFileW"]})
+
+    def test_local_guest_dll_resolves_named_and_ordinal_imports(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "patches" / "x86recomp").mkdir(parents=True)
+            census = {
+                "results": [
+                    {
+                        "file": "war3.exe",
+                        "machine": "x86",
+                        "pe_bits": 32,
+                        "imports": [{
+                            "dll": "Storm.dll",
+                            "dll_normalized": "storm.dll",
+                            "runtime_area": "unknown",
+                            "symbols": ["StormOpenFile", "#17"],
+                        }],
+                    },
+                    {
+                        "file": "Storm.dll",
+                        "machine": "x86",
+                        "pe_bits": 32,
+                        "imports": [],
+                        "exports": [
+                            {"name": "StormOpenFile", "ordinal": 5,
+                             "rva": "0x1000", "forwarder": None},
+                            {"name": "StormOrdinal17", "ordinal": 17,
+                             "rva": "0x2000", "forwarder": None},
+                        ],
+                    },
+                ]
+            }
+            report = build_gap_report(census, root)
+            symbols = report["modules"][0]["imports"][0]["symbols"]
+            self.assertEqual(symbols[0]["reference_status"], "local_module")
+            self.assertIsNone(symbols[0]["resolved_name"])
+            self.assertEqual(symbols[1]["reference_status"], "local_module_ordinal")
+            self.assertEqual(symbols[1]["resolved_name"], "StormOrdinal17")
+            self.assertEqual(report["summary"],
+                             {"local_module": 1, "local_module_ordinal": 1})
 
     def test_hle_regex_ignores_non_handlers(self):
         with tempfile.TemporaryDirectory() as temp:
