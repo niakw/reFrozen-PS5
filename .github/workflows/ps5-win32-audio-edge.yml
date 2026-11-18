@@ -1,0 +1,126 @@
+name: PS5 Win32 native audio edge gate
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/patch_x86recomp_runtime_ps5.py'
+      - 'ps5/runtime/ps5_audio_out_bridge.*'
+      - 'ps5/runtime/ps5_stereo_resampler.*'
+      - 'ps5/runtime/ps5_win32_audio_driver.*'
+      - 'tests/ps5/ps5_stereo_resampler_test.cpp'
+      - '.github/workflows/ps5-win32-audio-edge.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audio-edge:
+    runs-on: ubuntu-24.04
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      ENCORE_VENDOR_REF: 1e51d1f3383f149a599e36052aba7d887d4b1f77
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and run host resampler continuity test
+        run: |
+          c++ -std=c++20 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/runtime tests/ps5/ps5_stereo_resampler_test.cpp \
+            ps5/runtime/ps5_stereo_resampler.cpp -o build-resampler-test
+          ./build-resampler-test
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends curl unzip clang-18 llvm-18 lld-18
+      - name: Download and verify Payload SDK
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+      - name: Checkout pinned SDL3 headers only
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: ${{ env.ENCORE_VENDOR_REF }}
+          path: build/encore-vendor
+          sparse-checkout: |
+            sources/eden-cpm/sdl3/release-3.4.8/include
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Materialize patched SwARc runtime
+        run: |
+          git clone --filter=blob:none https://github.com/JTM-rootstorm/SwARc.git build/x86recomp
+          cd build/x86recomp
+          git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
+          for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do git apply "$patch"; done
+          cd "$GITHUB_WORKSPACE"
+          python3 -B scripts/ps5/patch_x86recomp_runtime_ps5.py build/x86recomp
+      - name: Compile mixer and native PS5 audio edge
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          set -euo pipefail
+          CXX="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          CC="$PS5_PAYLOAD_SDK/bin/prospero-clang"
+          SDL="$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include"
+          OUT="$GITHUB_WORKSPACE/build/audio-edge"
+          mkdir -p "$OUT"
+          "$CXX" -std=c++20 -O0 -g0 -fPIC -Ibuild/x86recomp/src -Ips5/runtime -I"$SDL" \
+            -c build/x86recomp/src/runtime/audio/mixer.cpp -o "$OUT/mixer.o"
+          "$CXX" -std=c++20 -O0 -g0 -fPIC -Ips5/runtime \
+            -c ps5/runtime/ps5_win32_audio_driver.cpp -o "$OUT/driver.o"
+          "$CXX" -std=c++20 -O0 -g0 -fPIC -Ips5/runtime \
+            -c ps5/runtime/ps5_stereo_resampler.cpp -o "$OUT/resampler.o"
+          "$CC" -std=c11 -O0 -g0 -fPIC -Ips5/runtime \
+            -c ps5/runtime/ps5_audio_out_bridge.c -o "$OUT/audio_out.o"
+          ld.lld-18 -r "$OUT/mixer.o" "$OUT/driver.o" "$OUT/resampler.o" "$OUT/audio_out.o" \
+            -o "$OUT/win32-audio-edge.o"
+          llvm-readobj-18 --file-headers "$OUT/win32-audio-edge.o" > "$OUT/elf-header.txt"
+          llvm-nm-18 --defined-only "$OUT/win32-audio-edge.o" | sort -u > "$OUT/defined.txt"
+          llvm-nm-18 --undefined-only "$OUT/win32-audio-edge.o" | sort -u > "$OUT/undefined.txt"
+      - name: Verify native audio closure
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          def syms(path):
+              out=set()
+              for line in Path(path).read_text().splitlines():
+                  parts=line.split()
+                  if parts:
+                      out.add(parts[-1])
+              return out
+          defined=syms('build/audio-edge/defined.txt')
+          undefined=syms('build/audio-edge/undefined.txt')
+          native_api={
+              'refrozen_ps5_win32_audio_driver_start',
+              'refrozen_ps5_win32_audio_driver_stop',
+              'refrozen_ps5_audio_out_open',
+              'refrozen_ps5_audio_out_push_f32',
+              'refrozen_ps5_audio_out_close',
+          }
+          old_sdl={
+              'SDL_DestroyAudioStream','SDL_GetCurrentAudioDriver','SDL_GetError',
+              'SDL_InitSubSystem','SDL_OpenAudioDeviceStream','SDL_PutAudioStreamData',
+              'SDL_QuitSubSystem','SDL_ResumeAudioStreamDevice',
+          }
+          ps5={'sceAudioOutOpen','sceAudioOutOutput','sceAudioOutClose'}
+          assert native_api <= defined, sorted(native_api-defined)
+          assert not (native_api & undefined), sorted(native_api & undefined)
+          assert not (old_sdl & undefined), sorted(old_sdl & undefined)
+          assert ps5 <= undefined, sorted(ps5-undefined)
+          Path('build/audio-edge/receipt.txt').write_text(
+              'REFROZEN_PS5_WIN32_AUDIO_EDGE pass=1 source_rate=runtime '
+              'output_rate=48000 resampler=linear native=sceAudioOut\n')
+          print(Path('build/audio-edge/receipt.txt').read_text(), end='')
+          PY
+      - name: Upload text-only audio edge evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win32-audio-edge-evidence
+          path: |
+            build/audio-edge/receipt.txt
+            build/audio-edge/elf-header.txt
+            build/audio-edge/defined.txt
+            build/audio-edge/undefined.txt
+          if-no-files-found: error
+          retention-days: 3
