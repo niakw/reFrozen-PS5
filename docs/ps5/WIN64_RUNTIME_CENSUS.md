@@ -170,3 +170,26 @@ wasapi.c
 ```
 
 For the selected OpenGL Warcraft path, Steam and the macOS Vulkan runtime remain outside the first-launch route. WASAPI can reuse the same native AudioOut bridge if the exact Warcraft binary imports it. `bcrypt.c` remains import-driven rather than speculative.
+
+
+## Native WASAPI output increment
+
+The event-driven Win64 WASAPI implementation now compiles for the PS5 ABI while retaining its guest COM model and client buffer semantics:
+
+- IMMDevice/IAudioClient/IAudioRenderClient/IAudioClock handlers are unchanged in shape;
+- client format conversion and the stereo float ring remain in the runtime;
+- a PS5 output thread consumes 256-frame grains, zero-fills underruns and signals the existing guest event when buffer space becomes available;
+- output uses the shared, host-tested `ps5_audio_out_bridge` and blocking `sceAudioOutOutput` pacing;
+- device identity is PS5 rather than macOS and clock timestamps use `CLOCK_MONOTONIC`.
+
+Compiler evidence: runtime census run `44270983005` reports **20 PASS / 3 FAIL**, including `wasapi.c PASS`.
+
+The only compiler-red files are now:
+
+```text
+bcrypt.c
+steam.c
+vulkan.c
+```
+
+`steam.c` and the NightSight macOS Vulkan loader are intentionally outside the selected first-launch OpenGL route. `bcrypt.c` remains the only potentially relevant generic Win64 service that should be driven by the exact private Warcraft code/import census rather than ported blindly.
