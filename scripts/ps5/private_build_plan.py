@@ -139,20 +139,44 @@ def _graphics_receipt(receipt: dict | None) -> tuple[dict, list[str]]:
         return {"qualified": False, "receipt": None}, [
             "registered PPSA99006 WGL/OpenGL hardware receipt not supplied"
         ]
-    marker = receipt.get("marker") or receipt.get("event") or ""
+
     passed = receipt.get("pass")
     if passed is None:
         passed = receipt.get("passed")
     sha = receipt.get("eboot_sha256") or receipt.get("sha256")
-    qualified = bool(passed is True or passed == 1) and isinstance(sha, str) and len(sha) == 64
-    if "REFROZEN_PS5_WGL_TITLE" not in str(marker) and receipt.get("probe") != "PPSA99006":
-        qualified = False
+    sha_ok = (
+        isinstance(sha, str)
+        and len(sha) == 64
+        and all(ch in "0123456789abcdefABCDEF" for ch in sha)
+    )
+
+    # Accept either an explicit probe identity or the exact terminal receipt
+    # shape emitted by scripts/ps5/verify-wgl-title-receipt.py on PR #60.
+    marker = receipt.get("marker") or receipt.get("event") or ""
+    terminal = str(receipt.get("terminal_line") or "")
+    identity_ok = (
+        receipt.get("probe") == "PPSA99006"
+        or "REFROZEN_PS5_WGL_TITLE" in str(marker)
+        or terminal.startswith("REFROZEN_PS5_WGL_TITLE pass=1 ")
+    )
+    semantic_ok = True
+    if terminal:
+        semantic_ok = (
+            receipt.get("frames") == 120
+            and receipt.get("clear") is True
+            and receipt.get("delete") is True
+            and int(receipt.get("width") or 0) > 0
+            and int(receipt.get("height") or 0) > 0
+        )
+
+    qualified = bool(passed is True or passed == 1) and sha_ok and identity_ok and semantic_ok
     return {
         "qualified": qualified,
         "receipt": {
-            "probe": receipt.get("probe"),
-            "marker": marker or None,
-            "eboot_sha256": sha,
+            "probe": receipt.get("probe") or ("PPSA99006" if identity_ok else None),
+            "marker": marker or ("REFROZEN_PS5_WGL_TITLE" if terminal else None),
+            "terminal_line": terminal or None,
+            "eboot_sha256": sha.lower() if sha_ok else sha,
         },
     }, [] if qualified else ["graphics hardware receipt is missing, malformed, or not passing"]
 
