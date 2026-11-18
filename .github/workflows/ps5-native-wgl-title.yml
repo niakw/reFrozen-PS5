@@ -16,13 +16,17 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
       PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
       ENCORE_VENDOR_SHA: 1e51d1f3383f149a599e36052aba7d887d4b1f77
       OPENGL_ORIGIN_SHA: ad2807d41cef2681882a9ee0d20808779f74b7cd
       BOILERPLATE_ORIGIN_SHA: 4f531c4b517f80bcb6b1267135848168d2250047
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -73,6 +77,14 @@ jobs:
           python -m pip install --disable-pip-version-check \
             'meson==1.10.1' 'PyYAML==6.0.3' 'Mako==1.3.10' 'packaging==25.0'
 
+      - name: Restore OpenGL compiler cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: refrozen-opengl-ccache-${{ env.OPENGL_ORIGIN_SHA }}-${{ env.PS5_SDK_SHA256 }}
+          restore-keys: |
+            refrozen-opengl-ccache-${{ env.OPENGL_ORIGIN_SHA }}-
+
       - name: Download and verify Payload SDK v0.42
         run: |
           mkdir -p build/sdk-download build/sdk-root
@@ -122,7 +134,9 @@ jobs:
           MAKEFLAGS: -j2
         run: |
           python3 tools/fetch-sources.py
+          export PSBC_JOBS="$(nproc)"
           make sdk-gl46
+          ccache --show-stats || true
           (cd "$PS5_OPENGL_SDK_PREFIX" && sha256sum --check --strict manifest.sha256)
 
       - name: Verify installed OpenGL SDK
