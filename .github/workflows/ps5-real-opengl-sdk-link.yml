@@ -141,7 +141,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/ps5-opengl-sdk
-          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1
+          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1-pathmap-v1
 
       - name: Link reFrozen WGL backend against the installed PS5 OpenGL SDK
         env:
