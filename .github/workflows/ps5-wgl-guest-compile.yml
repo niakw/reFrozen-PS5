@@ -1,0 +1,76 @@
+name: Win64 guest WGL shim compile
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/graphics/wgl_platform_contract.*'
+      - 'ps5/graphics/wgl_guest_runtime_ps5.*'
+      - '.github/workflows/ps5-wgl-guest-compile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Win64 runtime headers
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Compile WGL contract and Win64 guest shims
+        run: |
+          mkdir -p build/wgl-guest
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/graphics -Ibuild/nightsight/runtime \
+            -c ps5/graphics/wgl_platform_contract.cpp \
+            -o build/wgl-guest/wgl_platform_contract.o
+          clang++ -std=c++20 -O2 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/graphics -Ibuild/nightsight/runtime \
+            -c ps5/graphics/wgl_guest_runtime_ps5.cpp \
+            -o build/wgl-guest/wgl_guest_runtime_ps5.o
+          test -s build/wgl-guest/wgl_platform_contract.o
+          test -s build/wgl-guest/wgl_guest_runtime_ps5.o
+
+  ps5-sdk-compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Win64 runtime headers
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Download and verify Payload SDK
+        run: |
+          mkdir -p build/sdk-download build/sdk-root build/wgl-guest-ps5
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+      - name: Cross-compile WGL guest layer for PS5 ABI
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          CXX="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
+          test -x "$CXX"
+          "$CXX" -std=c++20 -O0 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/graphics -Ibuild/nightsight/runtime \
+            -c ps5/graphics/wgl_platform_contract.cpp \
+            -o build/wgl-guest-ps5/wgl_platform_contract.o
+          "$CXX" -std=c++20 -O0 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion \
+            -Ips5/graphics -Ibuild/nightsight/runtime \
+            -c ps5/graphics/wgl_guest_runtime_ps5.cpp \
+            -o build/wgl-guest-ps5/wgl_guest_runtime_ps5.o
+          test -s build/wgl-guest-ps5/wgl_platform_contract.o
+          test -s build/wgl-guest-ps5/wgl_guest_runtime_ps5.o
