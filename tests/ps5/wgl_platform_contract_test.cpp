@@ -20,6 +20,7 @@ struct FakeBackend {
   int destroys{};
   int swaps{};
   int clears{};
+  int swap_interval{1};
   bool fail_make{};
   bool fail_destroy{};
 
@@ -57,6 +58,11 @@ struct FakeBackend {
     ++self.swaps;
     return true;
   }
+  static bool SetSwapInterval(void* user, int interval) {
+    auto& self = *static_cast<FakeBackend*>(user);
+    self.swap_interval = interval;
+    return true;
+  }
   static void* Proc(void*, const char* name) {
     if (std::strcmp(name, "glExample") == 0) {
       return reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
@@ -73,6 +79,7 @@ WglBackendOps Ops(FakeBackend* fake) {
       .make_current = FakeBackend::MakeCurrent,
       .clear_current = FakeBackend::Clear,
       .swap_buffers = FakeBackend::Swap,
+      .set_swap_interval = FakeBackend::SetSwapInterval,
       .get_proc_address = FakeBackend::Proc,
   };
 }
@@ -102,6 +109,8 @@ int main() {
   assert(registry.SwapBuffers(0xABC));
   assert(!registry.SwapBuffers(0xABD));
   assert(fake.swaps == 1);
+  assert(registry.SetSwapInterval(0));
+  assert(fake.swap_interval == 0);
 
   // A current context cannot be destroyed.
   assert(!registry.DeleteContext(a));
@@ -121,6 +130,7 @@ int main() {
   assert(registry.CurrentContext() == 0);
   assert(registry.CurrentDeviceContext() == 0);
   assert(fake.clears == 1);
+  assert(!registry.SetSwapInterval(1));
 
   fake.fail_destroy = true;
   assert(!registry.DeleteContext(a));
