@@ -1,0 +1,49 @@
+name: PS5 Win64 runtime compile census
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/compile-win64-runtime-census.sh'
+      - '.github/workflows/ps5-win64-runtime-compile-census.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  census:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout pinned Win64 runtime
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Download and verify Payload SDK
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+      - name: Compile census
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          bash scripts/ps5/compile-win64-runtime-census.sh build/nightsight/runtime build/runtime-census
+          cat build/runtime-census/results.tsv
+          grep -q $'spvfix.c\tPASS' build/runtime-census/results.tsv
+          grep -q $'xreverb.c\tPASS' build/runtime-census/results.tsv
+      - name: Upload compiler evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-win64-runtime-compile-census
+          path: |
+            build/runtime-census/results.tsv
+            build/runtime-census/summary.txt
+            build/runtime-census/logs/
+          if-no-files-found: error
+          retention-days: 14
