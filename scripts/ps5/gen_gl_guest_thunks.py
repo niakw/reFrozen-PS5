@@ -180,7 +180,7 @@ def generate(prototypes: dict[str, Prototype], requested: list[str]) -> str:
             body = _body(proto)
         except GenerationError as exc:
             raise GenerationError(f"{name}: {exc}") from exc
-        lines.append(f"void I_opengl32_dll_{name}(CPU* c) {{ {body} }}")
+        lines.append(f"void I_opengl32_dll_{name}(CPU* c) {{ (void)c; {body} }}")
     lines += [
         "}",
         "",
