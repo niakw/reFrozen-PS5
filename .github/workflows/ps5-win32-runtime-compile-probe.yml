@@ -33,6 +33,8 @@ jobs:
           cd build/x86recomp
           git checkout ad1b16b30b3cc049e47a1ebbf96e8066b32191e1
           for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do git apply "$patch"; done
+          cd "$GITHUB_WORKSPACE"
+          python3 -B scripts/ps5/patch_x86recomp_runtime_ps5.py build/x86recomp
       - name: Compile the three source-level Apple blockers for PS5
         env:
           PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
