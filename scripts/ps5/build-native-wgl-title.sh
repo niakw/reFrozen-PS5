@@ -40,9 +40,19 @@ heap_default='write_u64(result.data, result.heap_size, std::numeric_limits<std::
 [[ "$(grep -Fc "$heap_default" "$heap_source")" == 1 ]] || { echo "module-writer heap marker changed" >&2; exit 2; }
 sed -i "s/$heap_default/write_u64(result.data, result.heap_size, 0x10000000ULL);/" "$heap_source"
 link_script="$APP/tools/build.sh"
-link_marker='--eh-frame-hdr \\'
-[[ "$(grep -Fc -- "$link_marker" "$link_script")" == 1 ]] || { echo "native link marker changed" >&2; exit 2; }
-sed -i 's/--eh-frame-hdr \\/--eh-frame-hdr --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free --wrap=posix_memalign --wrap=malloc_usable_size \\'/ "$link_script"
+python3 - "$link_script" <<'PY'
+from pathlib import Path
+import sys
+
+p = Path(sys.argv[1])
+text = p.read_text()
+old = "--eh-frame-hdr \\\n    --version-script"
+new = "--eh-frame-hdr --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free --wrap=posix_memalign --wrap=malloc_usable_size \\\n    --version-script"
+count = text.count(old)
+if count != 1:
+    raise SystemExit(f"native link marker changed: expected 1 occurrence, found {count}")
+p.write_text(text.replace(old, new))
+PY
 
 rm -rf "$APP/src" "$APP/include" "$APP/vendor"
 mkdir -p "$APP/src" "$APP/include" "$APP/vendor"
