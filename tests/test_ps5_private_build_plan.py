@@ -59,6 +59,51 @@ class PrivateBuildPlanTest(unittest.TestCase):
         self.assertEqual(plan["lifter"]["id"], "refrozen_x86recomp")
         self.assertEqual(plan["content"]["route"], "legacy_mpq_reader")
 
+    def test_verified_console_receipt_shape_is_accepted(self):
+        real = {
+            "schema": 1,
+            "passed": True,
+            "version": "4.6 (Compatibility Profile) Mesa PS5",
+            "renderer": "PS5 OpenGL Driver",
+            "width": 1920,
+            "height": 1080,
+            "frames": 120,
+            "clear": True,
+            "delete": True,
+            "receipt_count": 1,
+            "terminal_line": (
+                "REFROZEN_PS5_WGL_TITLE pass=1 "
+                "version=4.6 (Compatibility Profile) Mesa PS5 "
+                "renderer=PS5 OpenGL Driver width=1920 height=1080 "
+                "frames=120 clear=1 delete=1"
+            ),
+            "eboot_sha256": "B" * 64,
+        }
+        plan = build_plan(census(), gate(), real)
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        self.assertTrue(plan["graphics_hardware"]["qualified"])
+        self.assertEqual(
+            plan["graphics_hardware"]["receipt"]["eboot_sha256"], "b" * 64
+        )
+
+    def test_console_receipt_semantics_fail_closed(self):
+        bad = {
+            "passed": True,
+            "width": 1920,
+            "height": 1080,
+            "frames": 119,
+            "clear": True,
+            "delete": True,
+            "terminal_line": (
+                "REFROZEN_PS5_WGL_TITLE pass=1 version=4.6 "
+                "renderer=PS5 width=1920 height=1080 frames=119 clear=1 delete=1"
+            ),
+            "eboot_sha256": "c" * 64,
+        }
+        plan = build_plan(census(), gate(), bad)
+        self.assertEqual(plan["status"], "blocked")
+        self.assertFalse(plan["graphics_hardware"]["qualified"])
+
     def test_missing_hardware_receipt_blocks(self):
         plan = build_plan(census(), gate(), None)
         self.assertEqual(plan["status"], "blocked")
