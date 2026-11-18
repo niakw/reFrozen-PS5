@@ -33,7 +33,8 @@ def patch_runtime(runtime: Path) -> None:
     window = runtime / "window.c"
     kernel32 = runtime / "kernel32.c"
     files = runtime / "files.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files)):
+    handles = runtime / "handles.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -248,6 +249,179 @@ done:
 
 
 
+    replace_once(
+        handles,
+        """#include <mach/mach_time.h>
+""",
+        """""",
+    )
+    replace_once(
+        handles,
+        """static void deadline(struct timespec *ts, uint32_t ms) {
+""",
+        """static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+static void deadline(struct timespec *ts, uint32_t ms) {
+""",
+    )
+    replace_once(
+        handles,
+        """extern void cocoa_pump(int wait_ms);
+""",
+        """static void cocoa_pump(int wait_ms) { (void)wait_ms; }
+""",
+    )
+    replace_once(
+        handles,
+        """    int on_main = pthread_main_np();
+""",
+        """    int on_main = 0;  // PS5 has no AppKit main-run-loop ownership.
+""",
+    )
+    replace_once(
+        handles,
+        """            uint64_t now = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+""",
+        """            uint64_t now = monotonic_ns();
+""",
+    )
+
+
+    replace_once(
+        handles,
+        """#include <dispatch/dispatch.h>
+""",
+        """#include <signal.h>
+""",
+    )
+    replace_once(
+        handles,
+        """static void timer_close(HObj *o) {
+    if (o->data) { dispatch_source_cancel(o->data); dispatch_release(o->data); o->data = NULL; }
+}
+static void timer_fire(void *p) {
+    HObj *o = p;
+    pthread_mutex_lock(&hmu); o->state = 1; h_wake(o); pthread_mutex_unlock(&hmu);
+}
+""",
+        """typedef struct {
+    pthread_mutex_t mu;
+    timer_t id;
+    HObj *owner;
+} TimerData;
+
+static void timer_close(HObj *o) {
+    TimerData *t = o->data;
+    if (!t) return;
+    pthread_mutex_lock(&t->mu);
+    t->owner = NULL;
+    pthread_mutex_unlock(&t->mu);
+    timer_delete(t->id);
+    // A SIGEV_THREAD callback may already have been scheduled. Keep the tiny
+    // TimerData allocation alive until process exit so such a callback can
+    // safely observe owner == NULL instead of dereferencing freed storage.
+    o->data = NULL;
+}
+static void timer_fire(union sigval value) {
+    TimerData *t = value.sival_ptr;
+    if (!t) return;
+    pthread_mutex_lock(&t->mu);
+    HObj *o = t->owner;
+    if (o) {
+        pthread_mutex_lock(&hmu);
+        o->state = 1;
+        h_wake(o);
+        pthread_mutex_unlock(&hmu);
+    }
+    pthread_mutex_unlock(&t->mu);
+}
+static uint64_t make_timer(int manual) {
+    HObj *o = h_alloc(HT_TIMER);
+    TimerData *t = calloc(1, sizeof *t);
+    if (!o || !t) { free(o); free(t); return 0; }
+    pthread_mutex_init(&t->mu, NULL);
+    t->owner = o;
+    struct sigevent ev;
+    memset(&ev, 0, sizeof ev);
+    ev.sigev_notify = SIGEV_THREAD;
+    ev.sigev_value.sival_ptr = t;
+    ev.sigev_notify_function = timer_fire;
+    if (timer_create(CLOCK_MONOTONIC, &ev, &t->id) != 0) {
+        pthread_mutex_destroy(&t->mu);
+        free(t);
+        free(o);
+        return 0;
+    }
+    o->manual = manual;
+    o->data = t;
+    o->close = timer_close;
+    return h_new(o);
+}
+""",
+    )
+    replace_once(
+        handles,
+        """void I_kernel32_dll_CreateWaitableTimerA(CPU *c) { HObj *o = h_alloc(HT_TIMER); o->manual = (int)A1 != 0; o->close = timer_close; RET(h_new(o)); }
+void I_kernel32_dll_CreateWaitableTimerW(CPU *c) { I_kernel32_dll_CreateWaitableTimerA(c); }
+void I_kernel32_dll_CreateWaitableTimerExW(CPU *c) { HObj *o = h_alloc(HT_TIMER); o->manual = (uint32_t)A2 & 1; o->close = timer_close; RET(h_new(o)); }
+""",
+        """void I_kernel32_dll_CreateWaitableTimerA(CPU *c) { RET(make_timer((int)A1 != 0)); }
+void I_kernel32_dll_CreateWaitableTimerW(CPU *c) { I_kernel32_dll_CreateWaitableTimerA(c); }
+void I_kernel32_dll_CreateWaitableTimerExW(CPU *c) { RET(make_timer(((uint32_t)A2 & 1) != 0)); }
+""",
+    )
+    replace_once(
+        handles,
+        """    pthread_mutex_lock(&hmu);
+    timer_close(o);
+    o->state = 0;
+    dispatch_source_t s = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, DISPATCH_TIMER_STRICT,
+                                                 dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+    dispatch_set_context(s, o);
+    dispatch_source_set_event_handler_f(s, timer_fire);
+    dispatch_source_set_timer(s, dispatch_time(DISPATCH_TIME_NOW, ns), period ? (uint64_t)period * 1000000ull : DISPATCH_TIME_FOREVER, 0);
+    o->data = s;
+    pthread_mutex_unlock(&hmu);
+    dispatch_resume(s);
+    RET(1);
+""",
+        """    if (ns <= 0) ns = 1;
+    TimerData *t = o->data;
+    if (!t) { set_last_error(6); RET(0); return; }
+    struct itimerspec spec;
+    memset(&spec, 0, sizeof spec);
+    spec.it_value.tv_sec = ns / 1000000000ll;
+    spec.it_value.tv_nsec = ns % 1000000000ll;
+    if (period) {
+        uint64_t pns = (uint64_t)period * 1000000ull;
+        spec.it_interval.tv_sec = (time_t)(pns / 1000000000ull);
+        spec.it_interval.tv_nsec = (long)(pns % 1000000000ull);
+    }
+    pthread_mutex_lock(&hmu);
+    o->state = 0;
+    pthread_mutex_unlock(&hmu);
+    if (timer_settime(t->id, 0, &spec, NULL) != 0) { RET(0); return; }
+    RET(1);
+""",
+    )
+    replace_once(
+        handles,
+        """    pthread_mutex_lock(&hmu); timer_close(o); pthread_mutex_unlock(&hmu);
+    RET(1);
+""",
+        """    TimerData *t = o->data;
+    if (!t) { RET(0); return; }
+    struct itimerspec spec;
+    memset(&spec, 0, sizeof spec);
+    if (timer_settime(t->id, 0, &spec, NULL) != 0) { RET(0); return; }
+    RET(1);
+""",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
@@ -256,7 +430,7 @@ def main() -> int:
         patch_runtime(args.runtime)
     except (OSError, PatchError) as exc:
         parser.error(str(exc))
-    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c")
+    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c")
     return 0
 
 
