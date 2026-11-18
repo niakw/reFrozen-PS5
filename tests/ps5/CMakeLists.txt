@@ -125,3 +125,20 @@ else()
                          -Wall -Wextra -Werror -Wpedantic -Wconversion)
 endif()
 add_test(NAME wgl_platform_contract COMMAND wgl_platform_contract_test)
+
+option(REFROZEN_EGL_BACKEND_CHECK
+       "Compile the WGL EGL backend against available EGL headers" OFF)
+if(REFROZEN_EGL_BACKEND_CHECK)
+  add_library(wgl_egl_backend_compile OBJECT
+              "../../ps5/graphics/wgl_platform_contract.cpp"
+              "../../ps5/graphics/wgl_egl_backend_ps5.cpp")
+  target_compile_features(wgl_egl_backend_compile PRIVATE cxx_std_20)
+  target_include_directories(wgl_egl_backend_compile PRIVATE
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/graphics")
+  if(MSVC)
+    target_compile_options(wgl_egl_backend_compile PRIVATE /W4 /WX)
+  else()
+    target_compile_options(wgl_egl_backend_compile PRIVATE
+                           -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+endif()
