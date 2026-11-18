@@ -11,7 +11,7 @@ using namespace refrozen::ps5::graphics;
 
 int main() {
   EglWglBackend backend;
-  WglRegistry registry(MakeEglBackendOps(&backend));
+  WglRegistry registry(backend.Ops());
 
   // Exercise the exact compatibility-profile path Warcraft Classic is expected
   // to use. This code is linked in CI but only executed in a registered PS5 title.
