@@ -67,6 +67,18 @@ jobs:
             -c build/gl_guest_thunks.cpp -o build/gl_guest_thunks.o
           test -s build/gl_guest_thunks.o
 
+      - name: Execute generated Win64 ABI thunks against fake native OpenGL
+        run: |
+          clang++ -std=c++20 -O0 -g0 -Wall -Wextra -Werror -Wpedantic \
+            -DGL_GLEXT_PROTOTYPES \
+            -Ibuild/nightsight/runtime \
+            -Ibuild/encore-vendor/sources/opengl-mesa-26-2/include \
+            tests/ps5/gl_guest_thunk_runtime_test.cpp \
+            build/gl_guest_thunks.o \
+            -o build/gl_guest_thunk_runtime_test
+          ./build/gl_guest_thunk_runtime_test | tee build/gl_guest_thunk_runtime.log
+          grep -q 'gl_guest_thunk_runtime: PASS' build/gl_guest_thunk_runtime.log
+
       - name: Record generated surface
         run: |
           grep '^void I_opengl32_dll_gl' build/gl_guest_thunks.cpp > build/gl_guest_thunks.symbols
