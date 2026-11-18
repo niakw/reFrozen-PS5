@@ -3,7 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from scripts.ps5.runtime_gap_report import (\n    build_gap_report, reference_hle_surface, reference_win64_surface,\n)
+from scripts.ps5.runtime_gap_report import (
+    build_gap_report, reference_hle_surface, reference_win64_surface,
+)
 
 
 class RuntimeGapReportTest(unittest.TestCase):
