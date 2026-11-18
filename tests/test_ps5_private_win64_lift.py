@@ -55,7 +55,9 @@ class PrivateWin64LiftTest(unittest.TestCase):
             )
 
             output = repo / "private" / "lift"
-            report = lift_private(exe, lifter, output, repo)
+            report = lift_private(
+                exe, lifter, output, repo, require_pinned_lifter=False
+            )
             self.assertEqual(report["status"], "ok")
             self.assertEqual(report["translation"]["generated_code_files"], 1)
             self.assertEqual(report["translation"]["unsupported"], {})
@@ -76,6 +78,25 @@ class PrivateWin64LiftTest(unittest.TestCase):
                 lift_private(
                     exe, Path(temp) / "missing",
                     repo / "private" / "lift", repo,
+                    require_pinned_lifter=False,
+                )
+
+
+    def test_unpinned_lifter_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            (repo / "private").mkdir(parents=True)
+            exe = Path(temp) / "guest.exe"
+            exe.write_bytes(make_pe64())
+            lifter = Path(temp) / "lifter"
+            (lifter / "tools").mkdir(parents=True)
+            (lifter / "tools" / "recomp64.py").write_text(
+                "print('fixture')\n", encoding="utf-8"
+            )
+            with self.assertRaises(PrivateLiftError):
+                lift_private(
+                    exe, lifter, repo / "private" / "lift", repo,
+                    require_pinned_lifter=True,
                 )
 
 
