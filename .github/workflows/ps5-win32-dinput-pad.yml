@@ -17,6 +17,7 @@ jobs:
     env:
       PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
       PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      ENCORE_VENDOR_REF: 1e51d1f3383f149a599e36052aba7d887d4b1f77
     steps:
       - uses: actions/checkout@v4
       - name: Run fail-closed hook patch test
@@ -32,6 +33,16 @@ jobs:
           printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
           unzip -q build/sdk-download/sdk.zip -d build/sdk-root
           test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+      - name: Checkout pinned SDL3 headers only
+        uses: actions/checkout@v4
+        with:
+          repository: niakw/Prospero.Eden-Encore-vendor
+          ref: ${{ env.ENCORE_VENDOR_REF }}
+          path: build/encore-vendor
+          sparse-checkout: |
+            sources/eden-cpm/sdl3/release-3.4.8/include
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Materialize patched SwARc runtime
         run: |
           git clone --filter=blob:none https://github.com/JTM-rootstorm/SwARc.git build/x86recomp
@@ -48,7 +59,8 @@ jobs:
           CXX="$PS5_PAYLOAD_SDK/bin/prospero-clang++"
           OUT="$GITHUB_WORKSPACE/build/win32-dinput-pad"
           mkdir -p "$OUT"
-          "$CXX" -std=c++20 -O0 -g0 -fPIC -Ibuild/x86recomp/src \
+          SDL="$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include"
+          "$CXX" -std=c++20 -O0 -g0 -fPIC -Ibuild/x86recomp/src -I"$SDL" \
             -c build/x86recomp/src/runtime/hle/user32_input.cpp -o "$OUT/user32_input.o"
           "$CXX" -std=c++20 -O0 -g0 -fPIC -Ips5/runtime \
             -c ps5/runtime/ps5_dinput_pad_bridge.cpp -o "$OUT/ps5_dinput_pad_bridge.o"
