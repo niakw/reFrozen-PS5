@@ -1,0 +1,62 @@
+name: PS5 Payload SDK v0.42 object smoke
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/**'
+      - 'tests/ps5/**'
+      - 'scripts/ps5/**'
+      - '.github/workflows/ps5-sdk-object.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ps5-sdk-object:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 18 and archive tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-18 llvm-18 lld-18 cmake ninja-build curl unzip
+
+      - name: Download and verify pinned Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$PS5_SDK_URL" -o build/sdk-download/ps5-payload-sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" \
+            build/sdk-download/ps5-payload-sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/ps5-payload-sdk.zip -d build/sdk-root
+          test -d build/sdk-root/ps5-payload-sdk/target/include
+          test -d build/sdk-root/ps5-payload-sdk/target/include/c++/v1
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang
+
+      - name: Cross-compile reFrozen PS5 fixtures with x86_64-sie-ps5
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          bash scripts/ps5/compile-guest32-object.sh
+          grep -q 'Machine: EM_X86_64' \
+            build/ps5-sdk-smoke/guest64_ranges-object-header.txt
+          grep -q 'Machine: EM_X86_64' \
+            build/ps5-sdk-smoke/ps5_guest_memory_probe-object-header.txt
+
+      - name: Preserve compiler evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ps5-sdk-v042-object-evidence
+          path: |
+            build/ps5-sdk-smoke/*object-header.txt
+            build/ps5-sdk-smoke/CMakeCache.txt
+          if-no-files-found: ignore
+          retention-days: 7
