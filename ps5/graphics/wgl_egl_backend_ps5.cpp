@@ -99,6 +99,7 @@ WglBackendOps EglWglBackend::Ops() noexcept {
       .make_current = &EglWglBackend::MakeCurrent,
       .clear_current = &EglWglBackend::ClearCurrent,
       .swap_buffers = &EglWglBackend::SwapBuffers,
+      .set_swap_interval = &EglWglBackend::SetSwapInterval,
       .get_proc_address = &EglWglBackend::GetProcAddress,
   };
 }
@@ -190,6 +191,17 @@ bool EglWglBackend::SwapBuffers(void* user, DeviceContext dc) {
   std::lock_guard lock(self.impl_->mutex);
   if (!self.impl_->ready || !dc) return false;
   return eglSwapBuffers(self.impl_->display, self.impl_->surface) == EGL_TRUE;
+}
+
+bool EglWglBackend::SetSwapInterval(void* user, int interval) {
+  auto& self = *static_cast<EglWglBackend*>(user);
+  std::lock_guard lock(self.impl_->mutex);
+  if (!self.impl_->ready) return false;
+  // Negative WGL intervals (adaptive vsync) require a tear extension that the
+  // PS5 EGL stack must explicitly prove before we expose it. Clamp to the
+  // portable EGL semantics for now: 0 = immediate, positive = synchronized.
+  if (interval < 0) return false;
+  return eglSwapInterval(self.impl_->display, interval) == EGL_TRUE;
 }
 
 void* EglWglBackend::GetProcAddress(void* user, const char* name) {
