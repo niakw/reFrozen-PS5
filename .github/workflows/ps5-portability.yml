@@ -56,8 +56,9 @@ jobs:
       - name: Compile synthetic guest fixture without linking
         run: |
           cmake -S tests/ps5 -B build/ps5-host-object -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
-          cmake --build build/ps5-host-object --target guest32_ranges_compile --parallel 2
+          cmake --build build/ps5-host-object --target guest32_ranges_compile guest64_ranges_compile --parallel 2
           test -s build/ps5-host-object/CMakeFiles/guest32_ranges_compile.dir/guest32_ranges_test.cpp.o
+          test -s build/ps5-host-object/CMakeFiles/guest64_ranges_compile.dir/guest64_ranges_test.cpp.o
       - name: Verify PS5 SDK smoke script fails closed without SDK
         run: |
           bash -n scripts/ps5/compile-guest32-object.sh

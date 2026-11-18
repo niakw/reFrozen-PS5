@@ -4,7 +4,7 @@ Status: **NOT YET RUN AGAINST A PS5 SDK**. This is a reproducible build recipe, 
 
 ## Origin and purpose
 
-The toolchain derives its Clang 18 target, sysroot and C++ flags from `niakw/ProsperoEden-Encore/tools/ps5.cmake` (GPL-3.0-or-later). It is intentionally small: it compiles the synthetic host-independent 32-bit guest-range fixture into an x86-64 ELF **object**, without linking, launching, or packaging a PS5 application.
+The toolchain derives its Clang 18 target, sysroot and C++ flags from `niakw/ProsperoEden-Encore/tools/ps5.cmake` (GPL-3.0-or-later). It is intentionally small: it compiles the synthetic host-independent 32-bit and 64-bit guest-range fixtures into an x86-64 ELF **object**, without linking, launching, or packaging a PS5 application.
 
 This preflight can detect incompatible compiler headers, target triples, and C++20 compilation settings before building a custom runtime. A successful result **does not** qualify guest memory mapping, the Win32 API runtime, audio, graphics, threading or game compatibility.
 
@@ -25,8 +25,8 @@ Outputs stay in git-ignored `build/ps5-sdk-smoke/`; read `object-header.txt` to 
 
 ## What CI currently proves
 
-- Host C++20 unit tests run as an executable on Linux and macOS.
-- The **object-only mode** compiles on Ubuntu without depending on Warcraft binaries.
+- Host C++20 unit tests for both Win32 and Win64 guest image layouts run as executables on Linux and macOS.
+- The **object-only mode** builds both guest32 and guest64 fixtures on Ubuntu without depending on Warcraft binaries.
 - The PS5 SDK command refuses to run without a locally supplied SDK.
 - CI **does not** cross-compile the fixture with a PS5 SDK, because one is not provisioned to the runner.
 
