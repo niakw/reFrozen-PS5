@@ -29,9 +29,14 @@ python3 scripts/ps5/runtime_gap_report.py \
 Statuses:
 
 - `reference_hle`: an exact DLL/API handler appears in reFrozen's current x86recomp patch set.
-- `ordinal_needs_manual`: the import is by ordinal; resolution needs the exact DLL/version export table.
+- `local_module`: a matching scanned guest DLL is present.
+- `local_module_ordinal`: an ordinal was resolved against that exact local DLL's export table.
+- `local_module_export_missing`: the scanned DLL contradicts a named import; investigate version mismatch/corruption.
+- `ordinal_needs_manual`: the exact target DLL/export was not available in the scan.
 - `unmapped`: no exact current reFrozen HLE handler was found.
 - `ps5_status=unverified`: **always** used until that service is compiled and exercised through the PS5 runtime.
+
+If `tools/x86recomp` has not been prepared locally, the HLE comparison reports `patch_delta_only` and any `unmapped` result is provisional. After `scripts/setup_tools.sh`, it also scans the patched runtime checkout for the fuller reference surface.
 
 A reference HLE is not automatically portable. For example, implementations may rely on Darwin/POSIX functions, Cocoa, macOS kqueue semantics or a host graphics/audio stack unavailable on PS5.
 
