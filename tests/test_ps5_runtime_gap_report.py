@@ -159,6 +159,16 @@ class RuntimeGapReportTest(unittest.TestCase):
                     "sha256": "12" * 32,
                     "machine": "x86_64",
                     "pe_bits": 64,
+                    "version_resource": {
+                        "file_version": "1.31.1.12164",
+                        "product_version": "1.31.1.12164",
+                        "file_flags_mask": "0x0000003f",
+                        "file_flags": "0x00000000",
+                        "file_os": "0x00040004",
+                        "file_type": "0x00000001",
+                        "file_subtype": "0x00000000",
+                        "trust": "advisory_metadata_sha256_remains_authoritative",
+                    },
                     "imports": [{
                         "dll": "bcrypt.dll",
                         "dll_normalized": "bcrypt.dll",
