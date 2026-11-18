@@ -15,6 +15,7 @@ constexpr int kPs5CpuDirectMemoryType = 12;
 enum class DirectBackingStatus {
   ok,
   invalid_arguments,
+  policy_rejected,
   extent_unavailable,
   allocate_failed,
   map_failed_physical_released,
@@ -57,8 +58,11 @@ template <class ExtentFn, class AllocateFn, class MapFn,
   const auto mapped_size = RoundGuestMappingSize(logical_size, alignment);
   if (!mapped_size || address > UINTPTR_MAX ||
       (address & (alignment - 1)) != 0 ||
-      mapped_size > SIZE_MAX ||
-      CheckEncoreGuestVaPolicy(address, mapped_size) != GuestVaPolicy::allowed) {
+      mapped_size > SIZE_MAX) {
+    return out;
+  }
+  if (CheckEncoreGuestVaPolicy(address, mapped_size) != GuestVaPolicy::allowed) {
+    out.status = DirectBackingStatus::policy_rejected;
     return out;
   }
   out.address = static_cast<std::uintptr_t>(address);
