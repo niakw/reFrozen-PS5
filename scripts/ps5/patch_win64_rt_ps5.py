@@ -14,8 +14,9 @@ def replace_once(path: Path, old: str, new: str) -> None:
     text = path.read_text(encoding="utf-8")
     count = text.count(old)
     if count != 1:
+        first = old.splitlines()[0] if old.splitlines() else "<empty>"
         raise PatchError(
-            f"{path.name}: expected exact source fragment once, found {count}"
+            f"{path.name}: fragment {first!r} expected once, found {count}"
         )
     path.write_text(text.replace(old, new, 1), encoding="utf-8")
 
