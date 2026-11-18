@@ -28,7 +28,9 @@ jobs:
           for patch in "$GITHUB_WORKSPACE"/patches/x86recomp/*.patch; do
             git apply "$patch"
           done
-          test -d src/runtime
+          cd "$GITHUB_WORKSPACE"
+          python3 -B scripts/ps5/patch_x86recomp_runtime_ps5.py build/x86recomp
+          test -d build/x86recomp/src/runtime
       - name: Generate patched Win32 runtime portability census
         run: |
           python scripts/ps5/x86recomp_runtime_portability.py build/x86recomp/src/runtime --output build/win32-runtime-census.json
