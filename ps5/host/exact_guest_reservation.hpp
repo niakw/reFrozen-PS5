@@ -14,6 +14,15 @@ constexpr std::uint64_t kEncoreRadv32WindowEnd = 0x300000000ULL;
 constexpr std::uint64_t kEncoreDeviceMemoryBegin = 0x4000000000ULL;
 constexpr std::uint64_t kPs5KernelGranule = 0x4000ULL;
 
+[[nodiscard]] constexpr std::uint64_t RoundGuestMappingSize(
+    std::uint64_t logical_size, std::uint64_t alignment) noexcept {
+  if (!logical_size || !alignment || (alignment & (alignment - 1)) != 0)
+    return 0;
+  if (logical_size > std::numeric_limits<std::uint64_t>::max() - (alignment - 1))
+    return 0;
+  return (logical_size + alignment - 1) & ~(alignment - 1);
+}
+
 enum class GuestVaPolicy {
   allowed,
   invalid,
