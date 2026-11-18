@@ -32,7 +32,7 @@ int main() {
   assert(layout.add({0x140000000ULL, 0x900000ULL}) == Guest64InsertResult::ok);
   assert(layout.add({0x180000000ULL, 0x400000ULL}) == Guest64InsertResult::ok);
   assert(layout.images().size() == 2);
-  assert(layout.add({0x1408ffffULL, 2}) == Guest64InsertResult::overlap);
+  assert(layout.add({0x1408fffffULL, 2}) == Guest64InsertResult::overlap);
   assert(layout.add({0x180000000ULL, 0x10000ULL}) == Guest64InsertResult::overlap);
   assert(layout.add({0x140900000ULL, 0x1000ULL}) == Guest64InsertResult::ok);
   assert(layout.add({0x180000000ULL, 0}) == Guest64InsertResult::invalid_range);
