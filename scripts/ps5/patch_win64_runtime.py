@@ -343,10 +343,10 @@ static uint64_t monotonic_ns(void) {
     replace_once(
         xaudio2,
         """    pthread_setname_np(have_out ? "XAudio2" : "XAudio2 (silent)");
-    rt_log("[xaudio2] output: %s\n", have_out ? "CoreAudio, 48 kHz stereo" : "none (silent timing)");
+    rt_log("[xaudio2] output: %s\\n", have_out ? "CoreAudio, 48 kHz stereo" : "none (silent timing)");
     uint64_t next = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
 """,
-        """    rt_log("[xaudio2] output: %s\n", have_out ? "PS5 AudioOut, 48 kHz stereo S16" : "none (silent timing)");
+        """    rt_log("[xaudio2] output: %s\\n", have_out ? "PS5 AudioOut, 48 kHz stereo S16" : "none (silent timing)");
     uint64_t next = monotonic_ns();
 """,
     )
@@ -385,7 +385,7 @@ static uint64_t monotonic_ns(void) {
 
 """,
         """        if (have_out && refrozen_ps5_audio_out_push_f32(&out_dev, mix, PASS_FRAMES) < 0) {
-            rt_log("[xaudio2] sceAudioOutOutput failed; switching to silent timing\n");
+            rt_log("[xaudio2] sceAudioOutOutput failed; switching to silent timing\\n");
             refrozen_ps5_audio_out_close(&out_dev);
             have_out = 0;
             next = monotonic_ns();
