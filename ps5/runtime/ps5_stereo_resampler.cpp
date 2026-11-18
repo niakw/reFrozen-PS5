@@ -54,8 +54,11 @@ bool StereoLinearResampler::Produce(float* output,
   phase_ += double(output_frames) * step_;
   const std::size_t consumed = static_cast<std::size_t>(std::floor(phase_));
   phase_ -= double(consumed);
-  const std::size_t samples = std::min(consumed * 2, stereo_.size());
-  stereo_.erase(stereo_.begin(), stereo_.begin() + static_cast<std::ptrdiff_t>(samples));
+  const std::size_t samples =
+      consumed > stereo_.size() / 2 ? stereo_.size() : consumed * 2;
+  using Diff = std::vector<float>::difference_type;
+  stereo_.erase(stereo_.begin(),
+                stereo_.begin() + static_cast<Diff>(samples));
   return true;
 }
 
