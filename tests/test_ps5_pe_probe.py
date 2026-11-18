@@ -5,7 +5,8 @@ import struct
 import tempfile
 import unittest
 
-from scripts.ps5.pe_probe import inspect_pe, PEFormatError, _graphics_profile
+from scripts.ps5.pe_probe import (inspect_pe, PEFormatError, _graphics_profile,
+                                  _scan_com_guid_markers)
 
 
 def synthetic_pe(machine: int, bits: int) -> bytes:
@@ -75,6 +76,33 @@ class PEProbeTest(unittest.TestCase):
             dynamic["ps5_initial_route"],
             "undetermined_dynamic_renderer_possible",
         )
+
+    def test_com_guid_markers_report_only_counts_and_sections(self):
+        wasapi = bytes.fromhex("9503debc2fe57c468e3dc4579291692e")
+        xaudio = bytes.fromhex("8586505a54a2ba4f9b829a24b00306af")
+        raw = b"X" * 64 + wasapi + b"Y" * 32 + xaudio + b"Z" * 32 + wasapi
+        sections = [
+            {
+                "name": ".rdata", "raw_offset": 64,
+                "raw_size": len(wasapi) + 32 + len(xaudio),
+            },
+            {
+                "name": ".data",
+                "raw_offset": 64 + len(wasapi) + 32 + len(xaudio),
+                "raw_size": 32 + len(wasapi),
+            },
+        ]
+        markers = _scan_com_guid_markers(raw, sections)
+        by_name = {item["name"]: item for item in markers}
+        self.assertEqual(by_name["wasapi_mmdevice_enumerator"]["count"], 2)
+        self.assertEqual(
+            by_name["wasapi_mmdevice_enumerator"]["sections"],
+            [".data", ".rdata"],
+        )
+        self.assertEqual(by_name["xaudio2_27"]["count"], 1)
+        self.assertEqual(by_name["xaudio2_27"]["sections"], [".rdata"])
+        self.assertNotIn("offset", str(markers).lower())
+        self.assertNotIn("raw", str(markers).lower())
 
     def test_bad_inputs_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
