@@ -46,12 +46,30 @@ def validate_output(repo_root: Path, output: Path) -> tuple[Path, Path]:
     return private_root, output
 
 
-def validate_lifter(lifter_root: Path) -> Path:
+def validate_lifter(
+    lifter_root: Path, require_pinned: bool = True
+) -> tuple[Path, str | None]:
     lifter_root = lifter_root.resolve()
     script = lifter_root / "tools" / "recomp64.py"
     if not script.is_file():
         raise PrivateLiftError("NightSight tools/recomp64.py not found")
-    return script
+    head = None
+    if require_pinned:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(lifter_root), "rev-parse", "HEAD"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, check=False,
+            )
+        except OSError as exc:
+            raise PrivateLiftError("git is required to verify the pinned lifter") from exc
+        head = result.stdout.strip().lower()
+        if result.returncode != 0 or head != PINNED_NIGHTSIGHT:
+            raise PrivateLiftError(
+                "Win64 lifter checkout is not the pinned framework commit "
+                f"{PINNED_NIGHTSIGHT}"
+            )
+    return script, head
 
 
 def parse_unsupported(log_text: str) -> dict[str, int] | None:
@@ -80,13 +98,16 @@ def lift_private(
     output: Path,
     repo_root: Path,
     python: str = sys.executable,
+    require_pinned_lifter: bool = True,
 ) -> dict:
     executable = executable.resolve()
     if not executable.is_file():
         raise PrivateLiftError("input executable does not exist")
 
     private_root, output = validate_output(repo_root, output)
-    lifter = validate_lifter(lifter_root)
+    lifter, lifter_head = validate_lifter(
+        lifter_root, require_pinned=require_pinned_lifter
+    )
 
     try:
         pe = inspect_pe(executable)
@@ -138,6 +159,7 @@ def lift_private(
         },
         "lifter": {
             "expected_framework_commit": PINNED_NIGHTSIGHT,
+            "verified_framework_commit": lifter_head,
             "root_recorded": None,
         },
         "translation": {
