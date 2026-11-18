@@ -55,14 +55,13 @@ std::atomic<bool> g_cursor_visible{true};
 
 std::mutex g_pad_mu;
 DinputPadBridge g_pad{};
-bool g_pad_attempted = false;
 std::uint32_t g_xinput_packet = 1;
 std::uint8_t g_last_xinput[12]{};
 
 bool EnsurePadLocked() {
   if (g_pad.handle >= 0) return true;
-  if (g_pad_attempted) return false;
-  g_pad_attempted = true;
+  // Retry rather than permanently caching a boot-time failure: controllers
+  // can become available after the title has started.
   return OpenDinputPad(&g_pad) == 0;
 }
 
@@ -267,6 +266,36 @@ void cocoa_set_cursor_pos(int x, int y) {
 
 void cocoa_cursor_visible(int visible) {
   g_cursor_visible.store(visible != 0);
+}
+
+void cocoa_mouse_delta(int* dx, int* dy) {
+  // Relative DualSense motion is injected directly through DirectInput.
+  if (dx) *dx = 0;
+  if (dy) *dy = 0;
+}
+
+void cocoa_set_virtual_screen(int, int) {
+  // PS5 display mode selection is handled by the patched display.c hooks.
+}
+
+char* cocoa_choose_folder(const char*) {
+  // Registered titles cannot present an AppKit-style folder picker.
+  return nullptr;
+}
+
+void cocoa_alert(const char* title, const char* text) {
+  rt_log("[ps5/frontend] alert: %s: %s\n",
+         title ? title : "reFrozen", text ? text : "");
+}
+
+void cocoa_pick_friends(int, const char* const*, const char* const*,
+                        void (*done)(const int*, int, void*), void* context) {
+  if (done) done(nullptr, 0, context);
+}
+
+void gamepad_start(void) {
+  std::lock_guard<std::mutex> lock(g_pad_mu);
+  (void)EnsurePadLocked();
 }
 
 int gamepad_state(int user, std::uint8_t out[16], int) {
