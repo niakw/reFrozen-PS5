@@ -1,6 +1,6 @@
 # Real PS5 OpenGL SDK gate
 
-Status: **consumer link gate pending CI; hardware execution remains separate.**
+Status: **consumer link + registered-title package gate moved to preserved OpenGL SDK 1.0.2; hardware execution remains separate.**
 
 ## Why this gate exists
 
