@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Compile each C translation unit independently for the PS5 ABI.
 set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNTIME=${1:?usage: compile-win64-runtime-census.sh RUNTIME_ROOT OUT_DIR}
 OUT=${2:?usage: compile-win64-runtime-census.sh RUNTIME_ROOT OUT_DIR}
 SDK=${PS5_PAYLOAD_SDK:?PS5_PAYLOAD_SDK is required}
@@ -18,7 +19,7 @@ for src in "$RUNTIME"/*.c; do
   log="$OUT/logs/$name.log"
   if "$CC" -std=gnu11 -O0 -g0 \
       -Wno-unknown-pragmas -Wno-deprecated-declarations \
-      -I"$RUNTIME" -I"$(dirname "$RUNTIME")/third_party/vulkan/include" \
+      -I"$RUNTIME" -I"$ROOT/ps5/runtime" -I"$(dirname "$RUNTIME")/third_party/vulkan/include" \
       -c "$src" -o "$obj" >"$log" 2>&1; then
     printf '%s\tPASS\n' "$name" >> "$OUT/results.tsv"
     passed=$((passed + 1))
