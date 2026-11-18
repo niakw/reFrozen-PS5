@@ -13,9 +13,12 @@
 
 namespace {
 
-constexpr EGLDisplay kDisplay = reinterpret_cast<EGLDisplay>(UINTPTR_C(0x10));
-constexpr EGLConfig kConfig = reinterpret_cast<EGLConfig>(UINTPTR_C(0x20));
-constexpr EGLSurface kSurface = reinterpret_cast<EGLSurface>(UINTPTR_C(0x30));
+const EGLDisplay kDisplay =
+    reinterpret_cast<EGLDisplay>(static_cast<std::uintptr_t>(0x10));
+const EGLConfig kConfig =
+    reinterpret_cast<EGLConfig>(static_cast<std::uintptr_t>(0x20));
+const EGLSurface kSurface =
+    reinterpret_cast<EGLSurface>(static_cast<std::uintptr_t>(0x30));
 
 std::array<EGLint, 16> g_intervals{};
 std::size_t g_interval_count = 0;
