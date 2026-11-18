@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "ps5/host/guest32_ranges.hpp"
+#include "guest32_ranges.hpp"
 
 #include <cassert>
 #include <cstdint>
