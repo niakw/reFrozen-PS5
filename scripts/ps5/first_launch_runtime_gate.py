@@ -79,14 +79,32 @@ def build_gate(gap_report: dict, compile_status: dict[str, str],
         filename = module.get("file", "<unknown>")
         for lib in module.get("imports", []):
             dll = str(lib.get("dll", "")).lower()
-            if dll in _DLL_REQUIREMENTS:
-                for item in _DLL_REQUIREMENTS[dll]:
+            dll_requirements = _DLL_REQUIREMENTS.get(dll, set())
+            externalized = any(item.startswith("@") for item in dll_requirements)
+            if dll_requirements:
+                for item in dll_requirements:
                     need(item, f"{filename}: import {dll}")
             elif dll and lib.get("symbols"):
                 unknown_dlls.add(dll)
 
             for symbol in lib.get("symbols", []):
                 status = symbol.get("reference_status")
+                if status == "reference_win64_hle" and not externalized:
+                    units = symbol.get("reference_units") or []
+                    if not units:
+                        unresolved_imports.append({
+                            "file": filename,
+                            "dll": dll,
+                            "symbol": symbol.get("name"),
+                            "status": "reference_handler_unit_unproven",
+                        })
+                    else:
+                        for unit in units:
+                            need(
+                                str(unit),
+                                f"{filename}: handler for {dll}!"
+                                f"{symbol.get('name')}",
+                            )
                 if status in {
                     "unmapped", "reference_other_arch",
                     "local_module_export_missing", "ordinal_needs_manual",
@@ -128,8 +146,9 @@ def build_gate(gap_report: dict, compile_status: dict[str, str],
         "schema": 1,
         "passed": passed,
         "meaning": (
-            "PASS means every observed mapped first-launch route compiles for the "
-            "PS5 ABI and no imported symbol is unresolved. It is not proof of "
+            "PASS means every observed mapped first-launch route and every Win64 "
+            "handler implementation unit compiles for the PS5 ABI, and no imported "
+            "symbol is unresolved. It is not proof of "
             "runtime behavior, renderer correctness, audio correctness or device boot."
         ),
         "required": [
