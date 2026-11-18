@@ -54,11 +54,13 @@ jobs:
           file "$ELF" | tee build/ps5-probe/file.txt
           llvm-readelf-18 -h -l -d "$ELF" > build/ps5-probe/elf-metadata.txt
           llvm-nm-18 -u "$ELF" > build/ps5-probe/undefined-symbols.txt || true
+          cat build/ps5-probe/elf-metadata.txt
+          cat build/ps5-probe/undefined-symbols.txt
           sha256sum "$ELF" > build/ps5-probe/SHA256SUMS
           grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' build/ps5-probe/elf-metadata.txt
           grep -Eq 'Type:.*DYN' build/ps5-probe/elf-metadata.txt
           for lib in libkernel_web.sprx libSceLibcInternal.sprx libSceNet.sprx; do
-            grep -q "Shared library: [$lib]" build/ps5-probe/elf-metadata.txt
+            grep -Fq "Shared library: [$lib]" build/ps5-probe/elf-metadata.txt
           done
           for symbol in \
             sceKernelAllocateDirectMemory \
