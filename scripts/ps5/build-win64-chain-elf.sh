@@ -50,6 +50,7 @@ COMMON_MAP=(
 "$SDK/bin/prospero-clang++" \
   -std=c++20 -O1 -g \
   "${COMMON_MAP[@]}" \
+  -fdebug-compilation-dir=source \
   -Wall -Wextra -Werror -Wpedantic -Wconversion \
   -I"$ROOT/ps5/host" -I"$ROOT/ps5/runtime" -I"$FW/runtime" -I"$GEN" \
   "$ROOT/tests/ps5/ps5_win64_chain_main.cpp" \
