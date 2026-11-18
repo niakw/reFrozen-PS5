@@ -99,7 +99,7 @@ fi
 # Relocatable aggregation catches duplicate definitions and incompatible PS5
 # object formats while intentionally leaving libc/platform/game imports unresolved.
 mapfile -t OBJECTS < "$OUT/objects.list"
-"$CC" -r "${OBJECTS[@]}" -o "$OUT/first-launch-runtime.o"
+"$CC" -nostdlib -r "${OBJECTS[@]}" -o "$OUT/first-launch-runtime.o"
 test -s "$OUT/first-launch-runtime.o"
 
 printf 'REFROZEN_PS5_WIN64_RUNTIME_OBJECTS pass=1 runtime_units=21 objects=%s aggregate=1 excluded=steam.c,vulkan.c\n' "$count" \
