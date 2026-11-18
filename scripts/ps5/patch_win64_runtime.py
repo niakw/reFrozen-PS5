@@ -34,7 +34,8 @@ def patch_runtime(runtime: Path) -> None:
     kernel32 = runtime / "kernel32.c"
     files = runtime / "files.c"
     handles = runtime / "handles.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles)):
+    pdh = runtime / "pdh.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -422,6 +423,85 @@ void I_kernel32_dll_CreateWaitableTimerExW(CPU *c) { RET(make_timer(((uint32_t)A
     )
 
 
+    replace_once(
+        pdh,
+        """#include <mach/mach.h>
+""",
+        """#include <sys/resource.h>
+#include <sys/sysctl.h>
+""",
+    )
+    replace_once(
+        pdh,
+        """void I_pdh_dll_PdhCollectQueryData(CPU *c) {
+    Query *q = PTR(A0);
+    natural_t n = 0; processor_info_array_t info; mach_msg_type_number_t cnt;
+    if (!q || host_processor_info(mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &n, &info, &cnt) != KERN_SUCCESS) { RET(0); return; }
+    pthread_mutex_lock(&pmu);
+    double sum = 0; int m = (int)n < MAXCORES ? (int)n : MAXCORES;
+    for (int i = 0; i < m; i++) {
+        const integer_t *t = info + CPU_STATE_MAX * i;
+        uint64_t busy = (uint32_t)t[CPU_STATE_USER] + (uint32_t)t[CPU_STATE_SYSTEM] + (uint32_t)t[CPU_STATE_NICE];
+        uint64_t total = busy + (uint32_t)t[CPU_STATE_IDLE];
+        if (q->have && total > q->total[i]) q->load[i] = 100.0 * (double)(busy - q->busy[i]) / (double)(total - q->total[i]);
+        q->busy[i] = busy; q->total[i] = total;
+        sum += q->load[i];
+    }
+    q->load[MAXCORES] = m ? sum / m : 0;
+    q->have = 1; q->ncores = m;
+    pthread_mutex_unlock(&pmu);
+    vm_deallocate(mach_task_self(), (vm_address_t)info, cnt * sizeof(integer_t));
+    RET(0);
+}
+""",
+        """static int sample_cpu_ticks(long **out, int *ncores) {
+    size_t bytes = 0;
+    if (sysctlbyname("kern.cp_times", NULL, &bytes, NULL, 0) == 0 && bytes >= CPUSTATES * sizeof(long)) {
+        long *ticks = malloc(bytes);
+        if (ticks && sysctlbyname("kern.cp_times", ticks, &bytes, NULL, 0) == 0) {
+            *out = ticks;
+            *ncores = (int)(bytes / (CPUSTATES * sizeof(long)));
+            return 1;
+        }
+        free(ticks);
+    }
+    long one[CPUSTATES];
+    bytes = sizeof one;
+    if (sysctlbyname("kern.cp_time", one, &bytes, NULL, 0) == 0 && bytes >= sizeof one) {
+        long *ticks = malloc(sizeof one);
+        if (!ticks) return 0;
+        memcpy(ticks, one, sizeof one);
+        *out = ticks;
+        *ncores = 1;
+        return 1;
+    }
+    return 0;
+}
+
+void I_pdh_dll_PdhCollectQueryData(CPU *c) {
+    Query *q = PTR(A0);
+    long *info = NULL; int n = 0;
+    if (!q || !sample_cpu_ticks(&info, &n)) { RET(0); return; }
+    pthread_mutex_lock(&pmu);
+    double sum = 0; int m = n < MAXCORES ? n : MAXCORES;
+    for (int i = 0; i < m; i++) {
+        const long *t = info + CPUSTATES * i;
+        uint64_t busy = (uint64_t)t[CP_USER] + (uint64_t)t[CP_NICE] + (uint64_t)t[CP_SYS] + (uint64_t)t[CP_INTR];
+        uint64_t total = busy + (uint64_t)t[CP_IDLE];
+        if (q->have && total > q->total[i]) q->load[i] = 100.0 * (double)(busy - q->busy[i]) / (double)(total - q->total[i]);
+        q->busy[i] = busy; q->total[i] = total;
+        sum += q->load[i];
+    }
+    q->load[MAXCORES] = m ? sum / m : 0;
+    q->have = 1; q->ncores = m;
+    pthread_mutex_unlock(&pmu);
+    free(info);
+    RET(0);
+}
+""",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("runtime", type=Path)
@@ -430,7 +510,7 @@ def main() -> int:
         patch_runtime(args.runtime)
     except (OSError, PatchError) as exc:
         parser.error(str(exc))
-    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c")
+    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c pdh.c")
     return 0
 
 
