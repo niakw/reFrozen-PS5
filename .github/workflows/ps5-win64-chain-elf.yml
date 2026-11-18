@@ -51,6 +51,8 @@ jobs:
           python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_win64_memory.exe","build/generated-memory"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation-memory.log
           cat build/translation-memory.log
           test -s build/generated-memory/code_0000.c
+          test -s build/generated-memory/tables.c
+          grep -q "gentry" build/generated-memory/tables.c
           grep -q "void F_140001000" build/generated-memory/code_0000.c
           grep -q "0x140002000" build/generated-memory/code_0000.c
           grep -q "UNSUPPORTED: {}" build/translation-memory.log
@@ -85,6 +87,9 @@ jobs:
           grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' build/ps5-win64-chain/elf-metadata.txt
           grep -Eq 'Type:.*DYN' build/ps5-win64-chain/elf-metadata.txt
           grep -q "F_140001000" build/ps5-win64-chain/symbols.txt
+          for symbol in gentry gfuncs ngfuncs gsections ngsections gimage_base gimage_size; do
+            grep -q "$symbol" build/ps5-win64-chain/symbols.txt
+          done
           grep -q "g_refrozen_synthetic_pe" build/ps5-win64-chain/symbols.txt
           grep -q "REFROZEN_PS5_WIN64_CHAIN pass=1" <(strings "$ELF")
           for lib in libkernel_web.sprx libSceLibcInternal.sprx libSceNet.sprx; do
