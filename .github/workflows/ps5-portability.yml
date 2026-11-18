@@ -56,14 +56,17 @@ jobs:
       - name: Compile synthetic guest fixture without linking
         run: |
           cmake -S tests/ps5 -B build/ps5-host-object -DCMAKE_BUILD_TYPE=Debug -DREFROZEN_PS5_COMPILE_ONLY=ON
-          cmake --build build/ps5-host-object --target guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile pe_image_materializer_compile direct_guest_backing_compile ps5_exact_reservation_adapter_compile ps5_direct_guest_backing_adapter_compile --parallel 2
+          cmake --build build/ps5-host-object --target guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile pe_image_materializer_compile direct_guest_backing_compile guest_image_mapping_compile ps5_exact_reservation_adapter_compile ps5_direct_guest_backing_adapter_compile ps5_guest_image_mapping_adapter_compile ps5_guest_memory_probe_compile --parallel 2
           test -s build/ps5-host-object/CMakeFiles/guest32_ranges_compile.dir/guest32_ranges_test.cpp.o
           test -s build/ps5-host-object/CMakeFiles/guest64_ranges_compile.dir/guest64_ranges_test.cpp.o
           test -s build/ps5-host-object/CMakeFiles/exact_guest_reservation_compile.dir/exact_guest_reservation_test.cpp.o
           test -s build/ps5-host-object/CMakeFiles/pe_image_materializer_compile.dir/pe_image_materializer_test.cpp.o
           test -s build/ps5-host-object/CMakeFiles/direct_guest_backing_compile.dir/direct_guest_backing_test.cpp.o
+          test -s build/ps5-host-object/CMakeFiles/guest_image_mapping_compile.dir/guest_image_mapping_test.cpp.o
           test -n "$(find build/ps5-host-object/CMakeFiles/ps5_exact_reservation_adapter_compile.dir -type f -name '*.o' -print -quit)"
           test -n "$(find build/ps5-host-object/CMakeFiles/ps5_direct_guest_backing_adapter_compile.dir -type f -name '*.o' -print -quit)"
+          test -n "$(find build/ps5-host-object/CMakeFiles/ps5_guest_image_mapping_adapter_compile.dir -type f -name '*.o' -print -quit)"
+          test -n "$(find build/ps5-host-object/CMakeFiles/ps5_guest_memory_probe_compile.dir -type f -name '*.o' -print -quit)"
       - name: Verify PS5 SDK smoke script fails closed without SDK
         run: |
           bash -n scripts/ps5/compile-guest32-object.sh
