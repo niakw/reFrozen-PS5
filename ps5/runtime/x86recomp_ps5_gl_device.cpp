@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Native PS5 OpenGL gfx::Device for the reFrozen Win32/OpenGL route.
+// PS5 OpenGL compatibility implementation of the *pinned reFrozen 1.26a*
+// x86recomp gfx::Device ABI (ad1b16b... + reFrozen patches).
 //
-// The guest OpenGL semantic layer (runtime/gl/context.cpp) already converts
-// OpenGL 1.x state into gfx::FfState/FfDraw. This backend converts that
-// fixed-function contract back to the qualified PS5 OpenGL compatibility
-// context. It intentionally does not implement D3D9/program/compute paths.
+// The guest OpenGL HLE already converts Win32 OpenGL 1.x semantics into
+// D3D7-style Device state. This backend maps that exact state back onto the
+// qualified PS5 OpenGL compatibility context. It deliberately does not
+// pretend to support the unrelated DirectDraw/D3D9 programmable paths.
 #define GL_GLEXT_PROTOTYPES 1
 
 #include <GL/gl.h>
@@ -14,10 +15,11 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <memory>
-#include <mutex>
 #include <unordered_map>
 #include <vector>
 
@@ -35,7 +37,6 @@ using refrozen::ps5::graphics::WglHandle;
 using refrozen::ps5::graphics::WglRegistry;
 using refrozen::ps5::graphics::kWglContextCompatibilityProfileBit;
 
-// D3D7/D3D9 numeric state used by runtime/gl/context.cpp.
 enum : uint32_t {
   RS_ZENABLE = 7, RS_FILLMODE = 8, RS_SHADEMODE = 9, RS_ZWRITEENABLE = 14,
   RS_ALPHATESTENABLE = 15, RS_SRCBLEND = 19, RS_DESTBLEND = 20,
@@ -73,7 +74,8 @@ enum : uint32_t {
 };
 enum : uint32_t {
   FVF_XYZ = 0x002, FVF_XYZW = 0x4002, FVF_NORMAL = 0x010,
-  FVF_DIFFUSE = 0x040,
+  FVF_PSIZE = 0x020, FVF_DIFFUSE = 0x040, FVF_SPECULAR = 0x080,
+  TS_WORLD = 1, TS_VIEW = 2, TS_PROJECTION = 3, TS_TEXTURE0 = 16,
   CLEAR_TARGET = 1, CLEAR_ZBUFFER = 2, CLEAR_STENCIL = 4,
 };
 
@@ -83,32 +85,41 @@ struct SharedEgl {
 };
 
 SharedEgl& Egl() {
-  static SharedEgl shared;
-  return shared;
+  static SharedEgl value;
+  return value;
 }
 
 std::atomic<uint64_t> g_next_dc{1};
 
 [[noreturn]] void Unsupported(const char* what) {
-  FatalF("ps5-gl device: %s is not qualified for the Warcraft 1.26a OpenGL route", what);
+  FatalF("ps5-gl device: unsupported on Warcraft 1.26a OpenGL route: %s", what);
   __builtin_unreachable();
+}
+
+std::array<float, 16> Identity() {
+  return {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
 }
 
 float FloatOf(uint32_t bits) { return std::bit_cast<float>(bits); }
 
 void Argb(uint32_t c, GLfloat out[4]) {
-  out[0] = GLfloat((c >> 16) & 0xFF) / 255.0f;
-  out[1] = GLfloat((c >> 8) & 0xFF) / 255.0f;
-  out[2] = GLfloat(c & 0xFF) / 255.0f;
-  out[3] = GLfloat((c >> 24) & 0xFF) / 255.0f;
+  out[0] = GLfloat((c >> 16) & 0xffu) / 255.0f;
+  out[1] = GLfloat((c >> 8) & 0xffu) / 255.0f;
+  out[2] = GLfloat(c & 0xffu) / 255.0f;
+  out[3] = GLfloat((c >> 24) & 0xffu) / 255.0f;
 }
 
 GLenum Compare(uint32_t v) {
-  static constexpr GLenum k[] = {
-      GL_ALWAYS, GL_NEVER, GL_LESS, GL_EQUAL, GL_LEQUAL,
-      GL_GREATER, GL_NOTEQUAL, GL_GEQUAL, GL_ALWAYS,
-  };
-  return v < std::size(k) ? k[v] : GL_ALWAYS;
+  switch (v) {
+    case 1: return GL_NEVER;
+    case 2: return GL_LESS;
+    case 3: return GL_EQUAL;
+    case 4: return GL_LEQUAL;
+    case 5: return GL_GREATER;
+    case 6: return GL_NOTEQUAL;
+    case 7: return GL_GEQUAL;
+    default: return GL_ALWAYS;
+  }
 }
 
 GLenum Blend(uint32_t v) {
@@ -152,8 +163,8 @@ GLenum Primitive(uint32_t p) {
   }
 }
 
-GLenum TexArgSource(uint32_t a) {
-  switch (a & 0xF) {
+GLenum ArgSource(uint32_t a) {
+  switch (a & 0xfu) {
     case TA_DIFFUSE: return GL_PRIMARY_COLOR;
     case TA_CURRENT: return GL_PREVIOUS;
     case TA_TEXTURE: return GL_TEXTURE;
@@ -162,63 +173,22 @@ GLenum TexArgSource(uint32_t a) {
   }
 }
 
-GLenum TexOperand(uint32_t a, bool alpha) {
-  const bool complement = (a & TA_COMPLEMENT) != 0;
-  const bool replicate_alpha = (a & TA_ALPHAREPLICATE) != 0;
-  if (alpha || replicate_alpha)
-    return complement ? GL_ONE_MINUS_SRC_ALPHA : GL_SRC_ALPHA;
-  return complement ? GL_ONE_MINUS_SRC_COLOR : GL_SRC_COLOR;
+GLenum Operand(uint32_t a, bool alpha) {
+  const bool inv = (a & TA_COMPLEMENT) != 0;
+  const bool alpha_rep = (a & TA_ALPHAREPLICATE) != 0;
+  if (alpha || alpha_rep) return inv ? GL_ONE_MINUS_SRC_ALPHA : GL_SRC_ALPHA;
+  return inv ? GL_ONE_MINUS_SRC_COLOR : GL_SRC_COLOR;
 }
 
-void ApplyTexArgs(GLenum target, uint32_t arg0, uint32_t arg1, uint32_t arg2,
-                  bool alpha) {
-  const GLenum src0 = alpha ? GL_SOURCE0_ALPHA : GL_SOURCE0_RGB;
-  const GLenum op0 = alpha ? GL_OPERAND0_ALPHA : GL_OPERAND0_RGB;
-  const uint32_t args[3] = {arg0, arg1, arg2};
-  for (int i = 0; i < 3; ++i) {
-    glTexEnvi(GL_TEXTURE_ENV, src0 + i, GLint(TexArgSource(args[i])));
-    glTexEnvi(GL_TEXTURE_ENV, op0 + i, GLint(TexOperand(args[i], alpha)));
+GLenum DxtFormat(Format f) {
+  switch (f) {
+    case Format::DXT1: return GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    case Format::DXT2:
+    case Format::DXT3: return GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
+    case Format::DXT4:
+    case Format::DXT5: return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+    default: Unsupported("texture format");
   }
-  (void)target;
-}
-
-void ApplyTexCombine(uint32_t op, uint32_t a0, uint32_t a1, uint32_t a2,
-                     bool alpha) {
-  const GLenum combine = alpha ? GL_COMBINE_ALPHA : GL_COMBINE_RGB;
-  GLenum mode = GL_REPLACE;
-  GLint scale = 1;
-  uint32_t x0 = a1, x1 = a2, x2 = a0;
-  switch (op) {
-    case TOP_SELECTARG1: mode = GL_REPLACE; x0 = a1; break;
-    case TOP_MODULATE: mode = GL_MODULATE; break;
-    case TOP_MODULATE2X: mode = GL_MODULATE; scale = 2; break;
-    case TOP_MODULATE4X: mode = GL_MODULATE; scale = 4; break;
-    case TOP_ADD: mode = GL_ADD; break;
-    case TOP_ADDSIGNED: mode = GL_ADD_SIGNED; break;
-    case TOP_ADDSIGNED2X: mode = GL_ADD_SIGNED; scale = 2; break;
-    case TOP_SUBTRACT: mode = GL_SUBTRACT; break;
-    case TOP_BLENDTEXTUREALPHA:
-      mode = GL_INTERPOLATE;
-      x0 = a1;
-      x1 = a2;
-      x2 = TA_TEXTURE | TA_ALPHAREPLICATE;
-      break;
-    case TOP_DOTPRODUCT3:
-      mode = alpha ? GL_DOT3_RGBA : GL_DOT3_RGB;
-      break;
-    case TOP_LERP:
-      mode = GL_INTERPOLATE;
-      // D3D LERP(a0,a1,a2) = a1*a0 + a2*(1-a0).
-      x0 = a1;
-      x1 = a2;
-      x2 = a0;
-      break;
-    default:
-      Unsupported("texture combine operation");
-  }
-  glTexEnvi(GL_TEXTURE_ENV, combine, GLint(mode));
-  ApplyTexArgs(combine, x0, x1, x2, alpha);
-  glTexEnvi(GL_TEXTURE_ENV, alpha ? GL_ALPHA_SCALE : GL_RGB_SCALE, scale);
 }
 
 struct GlTexture {
@@ -230,7 +200,7 @@ struct GlTexture {
 };
 
 struct GlDepth {
-  GLuint renderbuffer{};
+  GLuint name{};
   int w{};
   int h{};
 };
@@ -241,22 +211,29 @@ class Ps5GlDevice final : public Device {
     if (!dc_) dc_ = g_next_dc.fetch_add(1);
     ctx_ = Egl().registry.CreateContext(kWglContextCompatibilityProfileBit);
     if (!ctx_ || !Egl().registry.MakeCurrent(dc_, ctx_))
-      FatalF("ps5-gl device: cannot create/make current a compatibility context");
+      FatalF("ps5-gl device: cannot create compatibility EGL context");
     out_w_ = Egl().backend.Width();
     out_h_ = Egl().backend.Height();
     if (out_w_ <= 0 || out_h_ <= 0)
-      FatalF("ps5-gl device: invalid EGL surface size %dx%d", out_w_, out_h_);
+      FatalF("ps5-gl device: invalid EGL surface %dx%d", out_w_, out_h_);
+
+    world_ = Identity();
+    view_ = Identity();
+    projection_ = Identity();
+    for (auto& m : texture_matrices_) m = Identity();
+    rs_.fill(0);
+    for (auto& s : tss_) s.fill(0);
   }
 
   ~Ps5GlDevice() override {
     EnsureCurrent();
-    for (auto& [id, tex] : textures_) {
+    for (auto& [id, t] : textures_) {
       (void)id;
-      if (tex.name) glDeleteTextures(1, &tex.name);
+      if (t.name) glDeleteTextures(1, &t.name);
     }
-    for (auto& [id, depth] : depths_) {
+    for (auto& [id, d] : depths_) {
       (void)id;
-      if (depth.renderbuffer) glDeleteRenderbuffers(1, &depth.renderbuffer);
+      if (d.name) glDeleteRenderbuffers(1, &d.name);
     }
     if (back_color_) glDeleteTextures(1, &back_color_);
     if (back_fbo_) glDeleteFramebuffers(1, &back_fbo_);
@@ -271,7 +248,6 @@ class Ps5GlDevice final : public Device {
     bb_h_ = h;
     vsync_ = vsync;
     (void)Egl().registry.SetSwapInterval(vsync ? 1 : 0);
-
     if (!back_fbo_) glGenFramebuffers(1, &back_fbo_);
     if (back_color_) glDeleteTextures(1, &back_color_);
     glGenTextures(1, &back_color_);
@@ -280,24 +256,23 @@ class Ps5GlDevice final : public Device {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_BGRA,
-                 GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
+                 GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
     glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                            GL_TEXTURE_2D, back_color_, 0);
     AttachDepth(current_depth_);
     RequireFramebuffer();
-    glViewport(0, 0, w, h);
-    glDisable(GL_SCISSOR_TEST);
-    glClearColor(0, 0, 0, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
+    viewport_ = {0, 0, uint32_t(w), uint32_t(h), 0.0f, 1.0f};
   }
 
   TextureId CreateTexture(int w, int h, int levels, Format fmt,
                           bool render_target) override {
     EnsureCurrent();
-    if (render_target) Unsupported("render-target texture on the GL1.1 path");
+    if (render_target) Unsupported("render-target texture");
     if (w <= 0 || h <= 0) return 0;
+    if (fmt != Format::A8R8G8B8 && !IsCompressed(fmt))
+      Unsupported("non-ARGB/non-DXT texture");
     if (levels <= 0) {
       levels = 1;
       for (int s = std::max(w, h); s > 1; s >>= 1) ++levels;
@@ -305,10 +280,6 @@ class Ps5GlDevice final : public Device {
     GlTexture t{.w=w, .h=h, .levels=levels, .format=fmt};
     glGenTextures(1, &t.name);
     glBindTexture(GL_TEXTURE_2D, t.name);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     for (int level = 0; level < levels; ++level) {
       const int lw = std::max(1, w >> level);
       const int lh = std::max(1, h >> level);
@@ -316,11 +287,10 @@ class Ps5GlDevice final : public Device {
         glTexImage2D(GL_TEXTURE_2D, level, GL_RGBA8, lw, lh, 0,
                      GL_BGRA, GL_UNSIGNED_BYTE, nullptr);
       } else {
-        const GLenum internal = CompressedFormat(fmt);
         const GLsizei bytes = GLsizei(RowPitch(fmt, uint32_t(lw)) *
                                       RowCount(fmt, uint32_t(lh)));
-        glCompressedTexImage2D(GL_TEXTURE_2D, level, internal, lw, lh, 0,
-                               bytes, nullptr);
+        glCompressedTexImage2D(GL_TEXTURE_2D, level, DxtFormat(fmt),
+                               lw, lh, 0, bytes, nullptr);
       }
     }
     const TextureId id = next_texture_++;
@@ -334,6 +304,7 @@ class Ps5GlDevice final : public Device {
     if (it == textures_.end()) return;
     if (it->second.name) glDeleteTextures(1, &it->second.name);
     textures_.erase(it);
+    for (auto& t : bound_textures_) if (t == id) t = 0;
   }
 
   void FillTexture(TextureId, const Rect&, uint32_t) override {
@@ -351,27 +322,20 @@ class Ps5GlDevice final : public Device {
     if (w <= 0 || h <= 0) return;
     glBindTexture(GL_TEXTURE_2D, t.name);
     if (t.format == Format::A8R8G8B8) {
+      if ((pitch & 3u) != 0) Unsupported("unaligned ARGB pitch");
       glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-      if (pitch == uint32_t(w * 4)) {
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-        glTexSubImage2D(GL_TEXTURE_2D, level, r.left, r.top, w, h,
-                        GL_BGRA, GL_UNSIGNED_BYTE, src);
-      } else {
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, GLint(pitch / 4));
-        glTexSubImage2D(GL_TEXTURE_2D, level, r.left, r.top, w, h,
-                        GL_BGRA, GL_UNSIGNED_BYTE, src);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-      }
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, GLint(pitch / 4));
+      glTexSubImage2D(GL_TEXTURE_2D, level, r.left, r.top, w, h,
+                      GL_BGRA, GL_UNSIGNED_BYTE, src);
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     } else {
-      if (r.left || r.top ||
+      const uint32_t expected = RowPitch(t.format, uint32_t(w));
+      if (r.left || r.top || pitch != expected ||
           w != std::max(1, t.w >> level) || h != std::max(1, t.h >> level))
-        Unsupported("partial compressed texture update");
-      const GLsizei bytes = GLsizei(RowPitch(t.format, uint32_t(w)) *
-                                    RowCount(t.format, uint32_t(h)));
-      if (pitch != RowPitch(t.format, uint32_t(w)))
-        Unsupported("pitched compressed texture update");
+        Unsupported("partial/pitched DXT update");
+      const GLsizei bytes = GLsizei(expected * RowCount(t.format, uint32_t(h)));
       glCompressedTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h,
-                                CompressedFormat(t.format), bytes, src);
+                                DxtFormat(t.format), bytes, src);
     }
   }
 
@@ -385,11 +349,10 @@ class Ps5GlDevice final : public Device {
 
   DepthId CreateDepth(int w, int h, Format fmt) override {
     EnsureCurrent();
-    if (fmt != Format::D24S8)
-      Unsupported("depth format other than D24S8");
+    if (fmt != Format::D24S8) Unsupported("depth format");
     GlDepth d{.w=w, .h=h};
-    glGenRenderbuffers(1, &d.renderbuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, d.renderbuffer);
+    glGenRenderbuffers(1, &d.name);
+    glBindRenderbuffer(GL_RENDERBUFFER, d.name);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
     const DepthId id = next_depth_++;
     depths_.emplace(id, d);
@@ -401,13 +364,13 @@ class Ps5GlDevice final : public Device {
     auto it = depths_.find(id);
     if (it == depths_.end()) return;
     if (current_depth_ == id) current_depth_ = 0;
-    if (it->second.renderbuffer) glDeleteRenderbuffers(1, &it->second.renderbuffer);
+    if (it->second.name) glDeleteRenderbuffers(1, &it->second.name);
     depths_.erase(it);
   }
 
   void SetRenderTarget(TextureId color, DepthId depth) override {
     EnsureCurrent();
-    if (color != 0) Unsupported("offscreen render target on GL1.1 path");
+    if (color != 0) Unsupported("offscreen render target");
     current_depth_ = depth;
     glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
     AttachDepth(depth);
@@ -430,20 +393,21 @@ class Ps5GlDevice final : public Device {
 
   void ReadBack(const Rect& r, void* dst, uint32_t pitch, Format fmt) override {
     EnsureCurrent();
-    if (!dst || fmt != Format::A8R8G8B8) Unsupported("ReadBack format");
+    if (!dst || (fmt != Format::A8R8G8B8 && fmt != Format::X8R8G8B8))
+      Unsupported("ReadBack format");
     const int w = r.right - r.left;
     const int h = r.bottom - r.top;
     if (w <= 0 || h <= 0) return;
+    if (pitch < uint32_t(w * 4)) Unsupported("ReadBack pitch");
     std::vector<uint8_t> pixels(size_t(w) * size_t(h) * 4);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, back_fbo_);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(r.left, bb_h_ - r.bottom, w, h, GL_BGRA,
                  GL_UNSIGNED_BYTE, pixels.data());
-    const uint32_t row = uint32_t(w * 4);
+    const size_t row = size_t(w) * 4;
     for (int y = 0; y < h; ++y)
       std::memcpy(static_cast<uint8_t*>(dst) + size_t(y) * pitch,
                   pixels.data() + size_t(h - 1 - y) * row, row);
-    glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
   }
 
   uint32_t StartReadBack(const Rect&) override { Unsupported("StartReadBack"); }
@@ -457,6 +421,59 @@ class Ps5GlDevice final : public Device {
     Unsupported("ReadBackFront");
   }
   void PresentFront() override { Unsupported("PresentFront"); }
+
+  void SetRenderState(uint32_t state, uint32_t value) override {
+    if (state >= rs_.size()) FatalF("ps5-gl device: render state %u out of range", state);
+    rs_[state] = value;
+  }
+
+  void SetTextureStageState(uint32_t stage, uint32_t type,
+                            uint32_t value) override {
+    if (stage >= tss_.size() || type >= tss_[0].size())
+      FatalF("ps5-gl device: texture state %u/%u out of range", stage, type);
+    tss_[stage][type] = value;
+  }
+
+  void SetTexture(uint32_t stage, TextureId id) override {
+    if (stage >= bound_textures_.size())
+      FatalF("ps5-gl device: texture stage %u out of range", stage);
+    if (id && !textures_.contains(id))
+      FatalF("ps5-gl device: unknown texture id %u", id);
+    bound_textures_[stage] = id;
+  }
+
+  void SetTransform(uint32_t type, const float m[16]) override {
+    if (!m) return;
+    if (type == TS_WORLD) std::copy_n(m, 16, world_.data());
+    else if (type == TS_VIEW) std::copy_n(m, 16, view_.data());
+    else if (type == TS_PROJECTION) std::copy_n(m, 16, projection_.data());
+    else if (type >= TS_TEXTURE0 && type < TS_TEXTURE0 + 8)
+      std::copy_n(m, 16, texture_matrices_[type - TS_TEXTURE0].data());
+    else
+      Unsupported("transform type");
+  }
+
+  void SetViewport(const Viewport& v) override { viewport_ = v; }
+  void SetScissor(const Rect& r) override { scissor_ = r; }
+  void SetMaterial(const Material& m) override { material_ = m; }
+
+  void SetLight(uint32_t index, const Light& l) override {
+    if (index >= lights_.size()) FatalF("ps5-gl device: light %u out of range", index);
+    lights_[index] = l;
+    light_valid_[index] = true;
+  }
+
+  void LightEnable(uint32_t index, bool enable) override {
+    if (index >= light_enabled_.size())
+      FatalF("ps5-gl device: light %u out of range", index);
+    light_enabled_[index] = enable;
+  }
+
+  void SetClipPlane(uint32_t index, const float plane[4]) override {
+    if (index >= clip_planes_.size() || !plane)
+      FatalF("ps5-gl device: clip plane %u invalid", index);
+    std::copy_n(plane, 4, clip_planes_[index].data());
+  }
 
   void Clear(uint32_t count, const Rect* rects, uint32_t flags,
              uint32_t color, float z, uint32_t stencil) override {
@@ -475,7 +492,7 @@ class Ps5GlDevice final : public Device {
       mask |= GL_DEPTH_BUFFER_BIT;
     }
     if (flags & CLEAR_STENCIL) {
-      glStencilMask(0xFFFFFFFFu);
+      glStencilMask(~GLuint(0));
       glClearStencil(GLint(stencil));
       mask |= GL_STENCIL_BUFFER_BIT;
     }
@@ -499,46 +516,75 @@ class Ps5GlDevice final : public Device {
   void BeginScene() override { EnsureCurrent(); }
   void EndScene() override {}
 
-  void DrawFf(const FfState& s, const FfDraw& d) override {
+  void Draw(uint32_t prim, uint32_t fvf, const void* vertices,
+            uint32_t vertex_count, uint32_t stride,
+            const uint16_t* indices, uint32_t index_count) override {
     EnsureCurrent();
-    if (!d.vertex_count || !d.position.data) return;
-    ApplyFixedState(s);
-    const GLenum primitive = Primitive(d.prim);
-    if (!primitive) Unsupported("fixed-function primitive");
-    const uint32_t count = d.indices ? d.index_count : d.vertex_count;
-    const int tex_sets = std::min(8u, (d.fvf >> 8) & 0xFu);
+    if (!vertices || !vertex_count) return;
+    const GLenum mode = Primitive(prim);
+    if (!mode) Unsupported("primitive type");
+    ApplyState();
 
-    glBegin(primitive);
-    for (uint32_t i = 0; i < count; ++i) {
-      const uint32_t v = FfIndex(d, i);
-      if (d.diffuse.data) {
-        const auto* c = static_cast<const uint8_t*>(d.diffuse.data) +
-                        size_t(v) * d.diffuse.stride;
-        if (d.rgba_colors)
-          glColor4ub(c[0], c[1], c[2], c[3]);
-        else
-          glColor4ub(c[2], c[1], c[0], c[3]);
-      }
-      if (d.normal.data) {
-        const auto* n = reinterpret_cast<const float*>(
-            static_cast<const uint8_t*>(d.normal.data) + size_t(v) * d.normal.stride);
+    const uint32_t draws = indices ? index_count : vertex_count;
+    const auto* base = static_cast<const uint8_t*>(vertices);
+    glBegin(mode);
+    for (uint32_t i = 0; i < draws; ++i) {
+      uint32_t vi = indices ? indices[i] : i;
+      if (vi >= vertex_count) vi = vertex_count - 1;
+      const uint8_t* p = base + size_t(vi) * stride;
+
+      const bool xyzw = (fvf & 0x400Eu) == FVF_XYZW;
+      const int pos_floats = xyzw ? 4 : 3;
+      const float* pos = reinterpret_cast<const float*>(p);
+      p += size_t(pos_floats) * sizeof(float);
+
+      if (fvf & FVF_NORMAL) {
+        const float* n = reinterpret_cast<const float*>(p);
         glNormal3fv(n);
+        p += 3 * sizeof(float);
       }
-      for (int unit = 0; unit < tex_sets; ++unit) {
-        if (!d.tex[unit].data) continue;
-        const auto* tc = reinterpret_cast<const float*>(
-            static_cast<const uint8_t*>(d.tex[unit].data) +
-            size_t(v) * d.tex[unit].stride);
+      if (fvf & FVF_PSIZE) p += 4;
+      if (fvf & FVF_DIFFUSE) {
+        // Guest GL HLE writes D3DCOLOR memory order B,G,R,A.
+        glColor4ub(p[2], p[1], p[0], p[3]);
+        p += 4;
+      }
+      if (fvf & FVF_SPECULAR) p += 4;
+
+      const uint32_t tex_count = std::min<uint32_t>((fvf >> 8) & 0xfu, 8);
+      for (uint32_t unit = 0; unit < tex_count; ++unit) {
+        const float* tc = reinterpret_cast<const float*>(p);
         glMultiTexCoord2fv(GL_TEXTURE0 + unit, tc);
+        // The 1.26a GL HLE generates two-component texture coordinates.
+        p += 2 * sizeof(float);
       }
-      const auto* pos = reinterpret_cast<const float*>(
-          static_cast<const uint8_t*>(d.position.data) + size_t(v) * d.position.stride);
-      if ((d.fvf & 0x400Eu) == FVF_XYZW)
-        glVertex4fv(pos);
-      else
-        glVertex3fv(pos);
+
+      if (xyzw) glVertex4fv(pos);
+      else glVertex3fv(pos);
     }
     glEnd();
+  }
+
+  Mapped MapDraw(uint32_t vertex_count, uint32_t stride,
+                 uint32_t index_count) override {
+    if (stride && vertex_count >
+        std::numeric_limits<size_t>::max() / size_t(stride))
+      FatalF("ps5-gl device: mapped draw size overflow");
+    mapped_vertices_.assign(size_t(vertex_count) * stride, 0);
+    mapped_indices_.assign(index_count, 0);
+    mapped_vertex_count_ = vertex_count;
+    mapped_index_count_ = index_count;
+    mapped_stride_ = stride;
+    return {
+        .vertices = mapped_vertices_.empty() ? nullptr : mapped_vertices_.data(),
+        .indices = mapped_indices_.empty() ? nullptr : mapped_indices_.data(),
+    };
+  }
+
+  void DrawMapped(uint32_t prim, uint32_t fvf) override {
+    Draw(prim, fvf, mapped_vertices_.data(), mapped_vertex_count_, mapped_stride_,
+         mapped_indices_.empty() ? nullptr : mapped_indices_.data(),
+         mapped_index_count_);
   }
 
   void Present() override {
@@ -551,11 +597,13 @@ class Ps5GlDevice final : public Device {
     glClear(GL_COLOR_BUFFER_BIT);
     const Rect r = FitRect(bb_w_, bb_h_, out_w_, out_h_);
     glBlitFramebuffer(0, 0, bb_w_, bb_h_,
-                      r.left, out_h_ - r.bottom, r.right, out_h_ - r.top,
+                      r.left, out_h_ - r.bottom,
+                      r.right, out_h_ - r.top,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
-    glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
+    NotePresentation({bb_w_, bb_h_, out_w_, out_h_, r});
     if (!Egl().registry.SwapBuffers(dc_))
       FatalF("ps5-gl device: eglSwapBuffers failed");
+    glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
   }
 
   ShaderId CreateShader(const hlsl::Program&) override {
@@ -569,18 +617,7 @@ class Ps5GlDevice final : public Device {
     if (Egl().registry.CurrentContext() != ctx_ ||
         Egl().registry.CurrentDeviceContext() != dc_) {
       if (!Egl().registry.MakeCurrent(dc_, ctx_))
-        FatalF("ps5-gl device: cannot restore current EGL context");
-    }
-  }
-
-  GLenum CompressedFormat(Format fmt) const {
-    switch (fmt) {
-      case Format::DXT1: return GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
-      case Format::DXT2:
-      case Format::DXT3: return GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
-      case Format::DXT4:
-      case Format::DXT5: return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
-      default: Unsupported("texture format");
+        FatalF("ps5-gl device: cannot restore current context");
     }
   }
 
@@ -588,9 +625,9 @@ class Ps5GlDevice final : public Device {
     glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
     GLuint rb = 0;
     if (id) {
-      auto it = depths_.find(id);
+      const auto it = depths_.find(id);
       if (it == depths_.end()) FatalF("ps5-gl device: unknown depth id %u", id);
-      rb = it->second.renderbuffer;
+      rb = it->second.name;
     }
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                               GL_RENDERBUFFER, rb);
@@ -599,17 +636,16 @@ class Ps5GlDevice final : public Device {
   void RequireFramebuffer() {
     const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
-      FatalF("ps5-gl device: framebuffer incomplete: 0x%X", unsigned(status));
+      FatalF("ps5-gl device: framebuffer incomplete 0x%X", unsigned(status));
   }
 
-  void ApplyMatrices(const FfState& s) {
+  void ApplyMatrices() {
     glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(s.world[0]);
+    glLoadMatrixf(world_.data());
 
-    float p[16];
-    std::memcpy(p, s.proj, sizeof p);
-    const float vw = float(std::max<uint32_t>(s.viewport.width, 1));
-    const float vh = float(std::max<uint32_t>(s.viewport.height, 1));
+    std::array<float, 16> p = projection_;
+    const float vw = float(std::max<uint32_t>(viewport_.width, 1));
+    const float vh = float(std::max<uint32_t>(viewport_.height, 1));
     for (int k = 0; k < 4; ++k) {
       const float w = p[k * 4 + 3];
       p[k * 4 + 0] += w / vw;
@@ -617,122 +653,172 @@ class Ps5GlDevice final : public Device {
       p[k * 4 + 2] = 2.0f * p[k * 4 + 2] - w;
     }
     glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(p);
+    glLoadMatrixf(p.data());
     glMatrixMode(GL_MODELVIEW);
   }
 
-  void ApplyTextureStage(const FfState& s, int unit) {
+  void ApplyTextureStage(uint32_t unit) {
     glActiveTexture(GL_TEXTURE0 + unit);
-    const uint32_t op = s.tss[unit][TSS_COLOROP];
-    if (op == TOP_DISABLE) {
+    const uint32_t op = tss_[unit][TSS_COLOROP];
+    const TextureId id = bound_textures_[unit];
+    if (op == TOP_DISABLE || !id) {
       glDisable(GL_TEXTURE_2D);
       return;
     }
-    auto it = textures_.find(s.textures[unit]);
-    if (!s.textures[unit] || it == textures_.end()) {
-      glDisable(GL_TEXTURE_2D);
-      return;
-    }
+    const auto it = textures_.find(id);
+    if (it == textures_.end()) FatalF("ps5-gl device: texture %u vanished", id);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, it->second.name);
 
-    const uint32_t mag = s.tss[unit][TSS_MAGFILTER];
-    const uint32_t min = s.tss[unit][TSS_MINFILTER];
-    const uint32_t mip = s.tss[unit][TSS_MIPFILTER];
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                    mag == 1 ? GL_NEAREST : GL_LINEAR);
-    GLenum min_filter = min == 1 ? GL_NEAREST : GL_LINEAR;
-    if (mip == 2) min_filter = min == 1 ? GL_NEAREST_MIPMAP_NEAREST
-                                        : GL_LINEAR_MIPMAP_NEAREST;
-    if (mip == 3) min_filter = min == 1 ? GL_NEAREST_MIPMAP_LINEAR
-                                        : GL_LINEAR_MIPMAP_LINEAR;
+                    tss_[unit][TSS_MAGFILTER] == 1 ? GL_NEAREST : GL_LINEAR);
+    GLenum min_filter = tss_[unit][TSS_MINFILTER] == 1 ? GL_NEAREST : GL_LINEAR;
+    if (tss_[unit][TSS_MIPFILTER] == 2)
+      min_filter = tss_[unit][TSS_MINFILTER] == 1
+          ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_NEAREST;
+    else if (tss_[unit][TSS_MIPFILTER] == 3)
+      min_filter = tss_[unit][TSS_MINFILTER] == 1
+          ? GL_NEAREST_MIPMAP_LINEAR : GL_LINEAR_MIPMAP_LINEAR;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GLint(min_filter));
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
-                    s.tss[unit][TSS_ADDRESSU] == 1 ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+                    tss_[unit][TSS_ADDRESSU] == 1 ? GL_REPEAT : GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
-                    s.tss[unit][TSS_ADDRESSV] == 1 ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+                    tss_[unit][TSS_ADDRESSV] == 1 ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 #ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
     glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT,
-                    GLfloat(std::max(1u, s.tss[unit][TSS_MAXANISOTROPY])));
+                    GLfloat(std::max(1u, tss_[unit][TSS_MAXANISOTROPY])));
 #endif
 
-    GLfloat constant[4];
-    Argb(s.rs[RS_TEXTUREFACTOR], constant);
+    GLfloat constant[4]; Argb(rs_[RS_TEXTUREFACTOR], constant);
     glTexEnvfv(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, constant);
     glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE);
-    ApplyTexCombine(s.tss[unit][TSS_COLOROP],
-                    s.tss[unit][TSS_COLORARG0],
-                    s.tss[unit][TSS_COLORARG1],
-                    s.tss[unit][TSS_COLORARG2], false);
-    ApplyTexCombine(s.tss[unit][TSS_ALPHAOP],
-                    s.tss[unit][TSS_ALPHAARG0],
-                    s.tss[unit][TSS_ALPHAARG1],
-                    s.tss[unit][TSS_ALPHAARG2], true);
 
-    float m[16] = {};
-    if (s.tss[unit][TSS_TEXTURETRANSFORMFLAGS]) {
-      std::copy_n(s.tex[unit], 8, m);
-      std::copy_n(s.tex[unit] + 12, 4, m + 8);
-      std::copy_n(s.tex[unit] + 8, 4, m + 12);
-    } else {
-      m[0] = m[5] = m[10] = m[15] = 1;
+    ApplyCombine(unit, false);
+    ApplyCombine(unit, true);
+
+    std::array<float,16> m = Identity();
+    if (tss_[unit][TSS_TEXTURETRANSFORMFLAGS]) {
+      const auto& d = texture_matrices_[unit];
+      std::copy_n(d.data(), 8, m.data());
+      std::copy_n(d.data() + 12, 4, m.data() + 8);
+      std::copy_n(d.data() + 8, 4, m.data() + 12);
     }
     glMatrixMode(GL_TEXTURE);
-    glLoadMatrixf(m);
+    glLoadMatrixf(m.data());
     glMatrixMode(GL_MODELVIEW);
   }
 
-  void ApplyLighting(const FfState& s) {
-    if (!s.rs[RS_LIGHTING]) {
+  void ApplyCombine(uint32_t unit, bool alpha) {
+    const uint32_t op = tss_[unit][alpha ? TSS_ALPHAOP : TSS_COLOROP];
+    const uint32_t a0 = tss_[unit][alpha ? TSS_ALPHAARG0 : TSS_COLORARG0];
+    const uint32_t a1 = tss_[unit][alpha ? TSS_ALPHAARG1 : TSS_COLORARG1];
+    const uint32_t a2 = tss_[unit][alpha ? TSS_ALPHAARG2 : TSS_COLORARG2];
+
+    if (alpha && op == TOP_DOTPRODUCT3 &&
+        tss_[unit][TSS_COLOROP] == TOP_DOTPRODUCT3) return;
+
+    GLenum mode = GL_REPLACE;
+    GLint scale = 1;
+    uint32_t x0 = a1, x1 = a2, x2 = a0;
+    switch (op) {
+      case TOP_SELECTARG1: mode = GL_REPLACE; break;
+      case TOP_MODULATE: mode = GL_MODULATE; break;
+      case TOP_MODULATE2X: mode = GL_MODULATE; scale = 2; break;
+      case TOP_MODULATE4X: mode = GL_MODULATE; scale = 4; break;
+      case TOP_ADD: mode = GL_ADD; break;
+      case TOP_ADDSIGNED: mode = GL_ADD_SIGNED; break;
+      case TOP_ADDSIGNED2X: mode = GL_ADD_SIGNED; scale = 2; break;
+      case TOP_SUBTRACT: mode = GL_SUBTRACT; break;
+      case TOP_BLENDTEXTUREALPHA:
+        mode = GL_INTERPOLATE;
+        x2 = TA_TEXTURE | TA_ALPHAREPLICATE;
+        break;
+      case TOP_DOTPRODUCT3:
+        mode = alpha ? GL_DOT3_RGBA :
+               (tss_[unit][TSS_ALPHAOP] == TOP_DOTPRODUCT3
+                    ? GL_DOT3_RGBA : GL_DOT3_RGB);
+        break;
+      case TOP_LERP:
+        mode = GL_INTERPOLATE;
+        x0 = a1; x1 = a2; x2 = a0;
+        break;
+      default:
+        Unsupported("texture combine op");
+    }
+
+    const GLenum combine = alpha ? GL_COMBINE_ALPHA : GL_COMBINE_RGB;
+    glTexEnvi(GL_TEXTURE_ENV, combine, GLint(mode));
+    const GLenum src0 = alpha ? GL_SOURCE0_ALPHA : GL_SOURCE0_RGB;
+    const GLenum opd0 = alpha ? GL_OPERAND0_ALPHA : GL_OPERAND0_RGB;
+    const uint32_t args[3] = {x0, x1, x2};
+    for (int i = 0; i < 3; ++i) {
+      glTexEnvi(GL_TEXTURE_ENV, src0 + i, GLint(ArgSource(args[i])));
+      glTexEnvi(GL_TEXTURE_ENV, opd0 + i, GLint(Operand(args[i], alpha)));
+    }
+    glTexEnvi(GL_TEXTURE_ENV, alpha ? GL_ALPHA_SCALE : GL_RGB_SCALE, scale);
+  }
+
+  void ApplyLighting() {
+    if (!rs_[RS_LIGHTING]) {
       glDisable(GL_LIGHTING);
       for (int i = 0; i < 8; ++i) glDisable(GL_LIGHT0 + i);
       return;
     }
     glEnable(GL_LIGHTING);
-    if (s.rs[RS_NORMALIZENORMALS]) glEnable(GL_NORMALIZE);
+    if (rs_[RS_NORMALIZENORMALS]) glEnable(GL_NORMALIZE);
     else glDisable(GL_NORMALIZE);
-    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, s.rs[RS_LOCALVIEWER] ? GL_TRUE : GL_FALSE);
-    GLfloat ambient[4]; Argb(s.rs[RS_AMBIENT] | 0xFF000000u, ambient);
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambient);
 
-    const bool diffuse_src = s.rs[RS_DIFFUSEMATERIALSOURCE] != 0;
-    const bool ambient_src = s.rs[RS_AMBIENTMATERIALSOURCE] != 0;
-    if (s.rs[RS_COLORVERTEX] && (diffuse_src || ambient_src)) {
+    GLfloat ambient[4]; Argb(rs_[RS_AMBIENT] | 0xff000000u, ambient);
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambient);
+    glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER,
+                  rs_[RS_LOCALVIEWER] ? GL_TRUE : GL_FALSE);
+
+    GLenum cm = 0;
+    if (rs_[RS_COLORVERTEX]) {
+      const bool d = rs_[RS_DIFFUSEMATERIALSOURCE] != 0;
+      const bool a = rs_[RS_AMBIENTMATERIALSOURCE] != 0;
+      const bool s = rs_[RS_SPECULARMATERIALSOURCE] != 0;
+      const bool e = rs_[RS_EMISSIVEMATERIALSOURCE] != 0;
+      if (d && a) cm = GL_AMBIENT_AND_DIFFUSE;
+      else if (d) cm = GL_DIFFUSE;
+      else if (a) cm = GL_AMBIENT;
+      else if (s) cm = GL_SPECULAR;
+      else if (e) cm = GL_EMISSION;
+    }
+    if (cm) {
       glEnable(GL_COLOR_MATERIAL);
-      GLenum mode = diffuse_src && ambient_src ? GL_AMBIENT_AND_DIFFUSE
-                    : diffuse_src ? GL_DIFFUSE : GL_AMBIENT;
-      glColorMaterial(GL_FRONT_AND_BACK, mode);
+      glColorMaterial(GL_FRONT_AND_BACK, cm);
     } else {
       glDisable(GL_COLOR_MATERIAL);
     }
 
-    auto material = [](GLenum pname, const Color& c) {
-      const GLfloat v[4] = {c.r, c.g, c.b, c.a};
+    const auto mat = [](GLenum pname, const Color& c) {
+      const GLfloat v[4] = {c.r,c.g,c.b,c.a};
       glMaterialfv(GL_FRONT_AND_BACK, pname, v);
     };
-    material(GL_DIFFUSE, s.material.diffuse);
-    material(GL_AMBIENT, s.material.ambient);
-    material(GL_SPECULAR, s.material.specular);
-    material(GL_EMISSION, s.material.emissive);
-    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, s.material.power);
+    mat(GL_DIFFUSE, material_.diffuse);
+    mat(GL_AMBIENT, material_.ambient);
+    mat(GL_SPECULAR, material_.specular);
+    mat(GL_EMISSION, material_.emissive);
+    glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, material_.power);
 
     glPushMatrix();
     glLoadIdentity();
     for (int i = 0; i < 8; ++i) {
-      const GLenum light = GL_LIGHT0 + i;
-      if (i >= int(s.light_count)) {
-        glDisable(light);
+      const GLenum gl_light = GL_LIGHT0 + i;
+      if (!light_enabled_[i] || !light_valid_[i]) {
+        glDisable(gl_light);
         continue;
       }
-      glEnable(light);
-      const Light& l = s.lights[i];
-      auto set_color = [light](GLenum pname, const Color& c) {
-        const GLfloat v[4] = {c.r, c.g, c.b, c.a};
-        glLightfv(light, pname, v);
+      glEnable(gl_light);
+      const Light& l = lights_[i];
+      const auto lc = [gl_light](GLenum pname, const Color& c) {
+        const GLfloat v[4] = {c.r,c.g,c.b,c.a};
+        glLightfv(gl_light, pname, v);
       };
-      set_color(GL_DIFFUSE, l.diffuse);
-      set_color(GL_SPECULAR, l.specular);
-      set_color(GL_AMBIENT, l.ambient);
+      lc(GL_DIFFUSE, l.diffuse);
+      lc(GL_SPECULAR, l.specular);
+      lc(GL_AMBIENT, l.ambient);
       GLfloat pos[4] = {};
       if (l.type == 3) {
         pos[0] = -l.direction[0]; pos[1] = -l.direction[1];
@@ -741,108 +827,113 @@ class Ps5GlDevice final : public Device {
         pos[0] = l.position[0]; pos[1] = l.position[1];
         pos[2] = l.position[2]; pos[3] = 1;
       }
-      glLightfv(light, GL_POSITION, pos);
-      glLightf(light, GL_CONSTANT_ATTENUATION, l.attenuation0);
-      glLightf(light, GL_LINEAR_ATTENUATION, l.attenuation1);
-      glLightf(light, GL_QUADRATIC_ATTENUATION, l.attenuation2);
+      glLightfv(gl_light, GL_POSITION, pos);
+      glLightf(gl_light, GL_CONSTANT_ATTENUATION, l.attenuation0);
+      glLightf(gl_light, GL_LINEAR_ATTENUATION, l.attenuation1);
+      glLightf(gl_light, GL_QUADRATIC_ATTENUATION, l.attenuation2);
       if (l.type == 2) {
         const GLfloat dir[3] = {l.direction[0], l.direction[1], l.direction[2]};
-        glLightfv(light, GL_SPOT_DIRECTION, dir);
-        glLightf(light, GL_SPOT_CUTOFF, std::clamp(l.phi * 90.0f / 3.14159265f, 0.0f, 90.0f));
+        glLightfv(gl_light, GL_SPOT_DIRECTION, dir);
+        glLightf(gl_light, GL_SPOT_CUTOFF,
+                 std::clamp(l.phi * 90.0f / 3.14159265f, 0.0f, 90.0f));
       } else {
-        glLightf(light, GL_SPOT_CUTOFF, 180.0f);
+        glLightf(gl_light, GL_SPOT_CUTOFF, 180.0f);
       }
     }
     glPopMatrix();
   }
 
-  void ApplyFixedState(const FfState& s) {
+  void ApplyState() {
     glBindFramebuffer(GL_FRAMEBUFFER, back_fbo_);
-    glViewport(GLint(s.viewport.x),
-               bb_h_ - GLint(s.viewport.y + s.viewport.height),
-               GLsizei(s.viewport.width), GLsizei(s.viewport.height));
-    glDepthRange(s.viewport.min_z, s.viewport.max_z);
 
-    if (s.rs[RS_SCISSORTESTENABLE]) {
+    glViewport(GLint(viewport_.x),
+               bb_h_ - GLint(viewport_.y + viewport_.height),
+               GLsizei(viewport_.width), GLsizei(viewport_.height));
+    glDepthRange(viewport_.min_z, viewport_.max_z);
+
+    if (rs_[RS_SCISSORTESTENABLE]) {
       glEnable(GL_SCISSOR_TEST);
-      glScissor(s.scissor.left, bb_h_ - s.scissor.bottom,
-                s.scissor.right - s.scissor.left,
-                s.scissor.bottom - s.scissor.top);
+      glScissor(scissor_.left, bb_h_ - scissor_.bottom,
+                std::max(0, scissor_.right - scissor_.left),
+                std::max(0, scissor_.bottom - scissor_.top));
     } else glDisable(GL_SCISSOR_TEST);
 
-    if (s.rs[RS_ZENABLE]) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    glDepthMask(s.rs[RS_ZWRITEENABLE] ? GL_TRUE : GL_FALSE);
-    glDepthFunc(Compare(s.rs[RS_ZFUNC]));
+    if (rs_[RS_ZENABLE]) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+    glDepthMask(rs_[RS_ZWRITEENABLE] ? GL_TRUE : GL_FALSE);
+    glDepthFunc(Compare(rs_[RS_ZFUNC]));
 
-    if (s.rs[RS_ALPHABLENDENABLE]) glEnable(GL_BLEND); else glDisable(GL_BLEND);
-    glBlendFunc(Blend(s.rs[RS_SRCBLEND]), Blend(s.rs[RS_DESTBLEND]));
+    if (rs_[RS_ALPHABLENDENABLE]) glEnable(GL_BLEND); else glDisable(GL_BLEND);
+    glBlendFunc(Blend(rs_[RS_SRCBLEND]), Blend(rs_[RS_DESTBLEND]));
 
-    if (s.rs[RS_ALPHATESTENABLE]) {
+    if (rs_[RS_ALPHATESTENABLE]) {
       glEnable(GL_ALPHA_TEST);
-      glAlphaFunc(Compare(s.rs[RS_ALPHAFUNC]),
-                  GLfloat(s.rs[RS_ALPHAREF] & 0xFF) / 255.0f);
+      glAlphaFunc(Compare(rs_[RS_ALPHAFUNC]),
+                  GLfloat(rs_[RS_ALPHAREF] & 0xffu) / 255.0f);
     } else glDisable(GL_ALPHA_TEST);
 
-    if (s.rs[RS_CULLMODE] == 1) glDisable(GL_CULL_FACE);
+    if (rs_[RS_CULLMODE] == 1) glDisable(GL_CULL_FACE);
     else {
       glEnable(GL_CULL_FACE);
       glFrontFace(GL_CCW);
-      glCullFace(s.rs[RS_CULLMODE] == 2 ? GL_BACK : GL_FRONT);
+      glCullFace(rs_[RS_CULLMODE] == 2 ? GL_BACK : GL_FRONT);
     }
-    GLenum poly = s.rs[RS_FILLMODE] == 1 ? GL_POINT
-                  : s.rs[RS_FILLMODE] == 2 ? GL_LINE : GL_FILL;
-    glPolygonMode(GL_FRONT_AND_BACK, poly);
-    glShadeModel(s.rs[RS_SHADEMODE] == 1 ? GL_FLAT : GL_SMOOTH);
 
-    const float factor = FloatOf(s.rs[RS_SLOPESCALEDEPTHBIAS]);
-    const float units = FloatOf(s.rs[RS_DEPTHBIAS]) * 16777216.0f;
+    const GLenum poly = rs_[RS_FILLMODE] == 1 ? GL_POINT :
+                        rs_[RS_FILLMODE] == 2 ? GL_LINE : GL_FILL;
+    glPolygonMode(GL_FRONT_AND_BACK, poly);
+    glShadeModel(rs_[RS_SHADEMODE] == 1 ? GL_FLAT : GL_SMOOTH);
+
+    const float factor = FloatOf(rs_[RS_SLOPESCALEDEPTHBIAS]);
+    const float units = FloatOf(rs_[RS_DEPTHBIAS]) * 16777216.0f;
     if (factor != 0 || units != 0) {
       glEnable(GL_POLYGON_OFFSET_FILL);
       glPolygonOffset(factor, units);
     } else glDisable(GL_POLYGON_OFFSET_FILL);
 
-    const uint32_t mask = s.rs[RS_COLORWRITEENABLE];
-    glColorMask((mask & 1) != 0, (mask & 2) != 0,
-                (mask & 4) != 0, (mask & 8) != 0);
+    const uint32_t mask = rs_[RS_COLORWRITEENABLE];
+    glColorMask((mask & 1u) != 0, (mask & 2u) != 0,
+                (mask & 4u) != 0, (mask & 8u) != 0);
 
-    if (s.rs[RS_STENCILENABLE]) {
+    if (rs_[RS_STENCILENABLE]) {
       glEnable(GL_STENCIL_TEST);
-      glStencilFunc(Compare(s.rs[RS_STENCILFUNC]), GLint(s.rs[RS_STENCILREF]),
-                    GLuint(s.rs[RS_STENCILMASK]));
-      glStencilMask(GLuint(s.rs[RS_STENCILWRITEMASK]));
-      glStencilOp(Stencil(s.rs[RS_STENCILFAIL]),
-                  Stencil(s.rs[RS_STENCILZFAIL]),
-                  Stencil(s.rs[RS_STENCILPASS]));
+      glStencilFunc(Compare(rs_[RS_STENCILFUNC]), GLint(rs_[RS_STENCILREF]),
+                    GLuint(rs_[RS_STENCILMASK]));
+      glStencilMask(GLuint(rs_[RS_STENCILWRITEMASK]));
+      glStencilOp(Stencil(rs_[RS_STENCILFAIL]),
+                  Stencil(rs_[RS_STENCILZFAIL]),
+                  Stencil(rs_[RS_STENCILPASS]));
     } else glDisable(GL_STENCIL_TEST);
 
-    if (s.rs[RS_FOGENABLE]) {
+    if (rs_[RS_FOGENABLE]) {
       glEnable(GL_FOG);
-      const uint32_t mode = s.rs[RS_FOGVERTEXMODE];
+      const uint32_t mode = rs_[RS_FOGVERTEXMODE];
       glFogi(GL_FOG_MODE, mode == 3 ? GL_LINEAR : mode == 2 ? GL_EXP2 : GL_EXP);
-      GLfloat fc[4]; Argb(s.rs[RS_FOGCOLOR] | 0xFF000000u, fc);
-      glFogfv(GL_FOG_COLOR, fc);
-      glFogf(GL_FOG_START, FloatOf(s.rs[RS_FOGSTART]));
-      glFogf(GL_FOG_END, FloatOf(s.rs[RS_FOGEND]));
-      glFogf(GL_FOG_DENSITY, FloatOf(s.rs[RS_FOGDENSITY]));
+      GLfloat c[4]; Argb(rs_[RS_FOGCOLOR] | 0xff000000u, c);
+      glFogfv(GL_FOG_COLOR, c);
+      glFogf(GL_FOG_START, FloatOf(rs_[RS_FOGSTART]));
+      glFogf(GL_FOG_END, FloatOf(rs_[RS_FOGEND]));
+      glFogf(GL_FOG_DENSITY, FloatOf(rs_[RS_FOGDENSITY]));
     } else glDisable(GL_FOG);
 
-    ApplyMatrices(s);
-    ApplyLighting(s);
+    ApplyMatrices();
+    ApplyLighting();
 
     glPushMatrix();
     glLoadIdentity();
-    const uint32_t planes = s.rs[RS_CLIPPLANEENABLE];
+    const uint32_t planes = rs_[RS_CLIPPLANEENABLE];
     for (int i = 0; i < 6; ++i) {
-      const GLenum plane = GL_CLIP_PLANE0 + i;
+      const GLenum gl_plane = GL_CLIP_PLANE0 + i;
       if (planes & (1u << i)) {
-        const GLdouble eq[4] = {s.clip[i][0], s.clip[i][1], s.clip[i][2], s.clip[i][3]};
-        glClipPlane(plane, eq);
-        glEnable(plane);
-      } else glDisable(plane);
+        const GLdouble eq[4] = {
+            clip_planes_[i][0], clip_planes_[i][1],
+            clip_planes_[i][2], clip_planes_[i][3]};
+        glClipPlane(gl_plane, eq);
+        glEnable(gl_plane);
+      } else glDisable(gl_plane);
     }
     glPopMatrix();
 
-    for (int unit = 0; unit < 8; ++unit) ApplyTextureStage(s, unit);
+    for (uint32_t i = 0; i < 8; ++i) ApplyTextureStage(i);
     glActiveTexture(GL_TEXTURE0);
   }
 
@@ -853,19 +944,40 @@ class Ps5GlDevice final : public Device {
   int bb_w_{};
   int bb_h_{};
   bool vsync_{};
+
   GLuint back_fbo_{};
   GLuint back_color_{};
   DepthId current_depth_{};
+
   TextureId next_texture_{1};
   DepthId next_depth_{1};
   std::unordered_map<TextureId, GlTexture> textures_;
   std::unordered_map<DepthId, GlDepth> depths_;
+
+  std::array<uint32_t,256> rs_{};
+  std::array<std::array<uint32_t,33>,8> tss_{};
+  std::array<TextureId,8> bound_textures_{};
+  std::array<float,16> world_{};
+  std::array<float,16> view_{};
+  std::array<float,16> projection_{};
+  std::array<std::array<float,16>,8> texture_matrices_{};
+  Viewport viewport_{};
+  Rect scissor_{};
+  Material material_{};
+  std::array<Light,8> lights_{};
+  std::array<bool,8> light_valid_{};
+  std::array<bool,8> light_enabled_{};
+  std::array<std::array<float,4>,8> clip_planes_{};
+
+  std::vector<uint8_t> mapped_vertices_;
+  std::vector<uint16_t> mapped_indices_;
+  uint32_t mapped_vertex_count_{};
+  uint32_t mapped_index_count_{};
+  uint32_t mapped_stride_{};
 };
 
 }  // namespace
 
-// Keep the existing x86recomp backend-selection ABI. PS5 builds exclude
-// runtime/gfx/gpu_device.cpp and provide this implementation instead.
 std::unique_ptr<Device> CreateGpuDevice(SDL_Window* window) {
   return std::make_unique<Ps5GlDevice>(window);
 }
