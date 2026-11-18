@@ -12,6 +12,8 @@ def census(bits=64, machine="x86_64", storage="casc", route="opengl_wgl_to_ps5_e
             "sha256": "a" * 64,
             "machine": machine,
             "pe_bits": bits,
+            "image_base": "0x140000000" if bits == 64 else "0x00400000",
+            "image_size": 0x02000000,
             "version_resource": {"file_version": "1.31.1.12164"},
             "graphics_profile": {
                 "ps5_initial_route": route,
@@ -268,6 +270,87 @@ class PrivateBuildPlanTest(unittest.TestCase):
         plan = build_plan(c, gate(), receipt())
         self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
         self.assertEqual(plan["local_modules"], [])
+
+    def test_colliding_module_is_rebased_only_with_relocations(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Game.dll", "dll_normalized": "game.dll",
+            "symbols": ["GameMain"], "count": 1,
+        }]
+        c["results"].append({
+            "file": "Game.dll",
+            "relative_file": "x86_64/Game.dll",
+            "sha256": "f" * 64,
+            "machine": "x86_64",
+            "pe_bits": 64,
+            "image_base": "0x140000000",
+            "image_size": 0x00300000,
+            "relocations_stripped": False,
+            "base_relocation_size": 0x4000,
+            "can_rebase": True,
+            "imports": [],
+        })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        module = plan["local_modules"][0]
+        self.assertEqual(module["preferred_image_base"], "0x140000000")
+        self.assertEqual(module["load_image_base"], "0x180000000")
+        self.assertTrue(module["rebase_required"])
+        self.assertEqual(module["rebase_arg"], "0x180000000")
+
+    def test_colliding_module_without_relocations_blocks(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Game.dll", "dll_normalized": "game.dll",
+            "symbols": ["GameMain"], "count": 1,
+        }]
+        c["results"].append({
+            "file": "Game.dll",
+            "relative_file": "x86_64/Game.dll",
+            "sha256": "f" * 64,
+            "machine": "x86_64",
+            "pe_bits": 64,
+            "image_base": "0x140000000",
+            "image_size": 0x00300000,
+            "relocations_stripped": True,
+            "base_relocation_size": 0,
+            "can_rebase": False,
+            "imports": [],
+        })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "blocked")
+        self.assertTrue(any(
+            "cannot be rebased safely" in blocker for blocker in plan["blockers"]
+        ))
+
+    def test_second_colliding_dll_gets_next_free_aligned_base(self):
+        c = census()
+        c["results"][0]["imports"] = [
+            {"dll": "A.dll", "dll_normalized": "a.dll", "symbols": ["A"], "count": 1},
+            {"dll": "B.dll", "dll_normalized": "b.dll", "symbols": ["B"], "count": 1},
+        ]
+        for name, sha in (("A.dll", "c"), ("B.dll", "d")):
+            c["results"].append({
+                "file": name,
+                "relative_file": f"x86_64/{name}",
+                "sha256": sha * 64,
+                "machine": "x86_64",
+                "pe_bits": 64,
+                "image_base": "0x180000000",
+                "image_size": 0x00180000,
+                "relocations_stripped": False,
+                "base_relocation_size": 0x2000,
+                "can_rebase": True,
+                "imports": [],
+            })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        a, b = plan["local_modules"]
+        self.assertEqual(a["load_image_base"], "0x180000000")
+        self.assertFalse(a["rebase_required"])
+        self.assertNotEqual(b["load_image_base"], a["load_image_base"])
+        self.assertEqual(int(b["load_image_base"], 0) % 0x10000, 0)
+        self.assertTrue(b["rebase_required"])
 
     def test_map_summary_is_advisory(self):
         maps = [
