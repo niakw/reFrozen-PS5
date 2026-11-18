@@ -1,15 +1,25 @@
 # PS5 DirectInput pad bridge
 
-Status: compiler/host-test gate. Hardware behavior is not yet qualified.
+Status: host-test + PS5 Win32 object-link gate; hardware behavior is not yet qualified.
 
-The Win64 runtime already exposes the original DirectInput event entry points:
+The native PS5 bridge consumes four small DirectInput-style event entry points:
 
 - `di_key(scan, extended, down)`
 - `di_mouse_move(dx, dy)`
 - `di_mouse_wheel(delta)`
 - `di_mouse_button(button, down)`
 
-The PS5 bridge feeds these entry points from a native DualSense sample without changing the guest-facing DirectInput implementation.
+For the Win64 research runtime these hooks already existed. The Warcraft III
+1.26a **Win32 x86recomp runtime now exposes the same four C hooks from its
+existing `RawInput` implementation**. They call `EmitRawInput()`, so mouse
+and keyboard state flows through SwARc's normal `dinput8.dll` HLE without
+reimplementing IDirectInput.
+
+This deliberately does **not** synthesize Win32 window messages or user32 key
+state. Those remain owned by the host window/event layer. Therefore this bridge
+qualifies the DirectInput device path only; menus or code that depend on
+`WM_KEYDOWN`, `WM_MOUSEMOVE` or `GetKeyState` still need the separate
+native user32/window adapter.
 
 ## Initial RTS mapping
 
@@ -33,4 +43,11 @@ The mapping is deliberately small. It does not replace physical keyboard/mouse s
 
 ## Qualification
 
-The host test validates open/poll/edge/release/intercept behavior. The PS5 SDK object gate cross-compiles the real bridge with `x86_64-sie-ps5`. Neither test proves `scePadReadState` behavior on the user's console.
+The host test validates open/poll/edge/release/intercept behavior. The PS5 SDK
+object gate cross-compiles the real bridge with `x86_64-sie-ps5`, then
+relocatably links it with the 55-object Win32 runtime closure. The gate requires
+`di_key`, `di_mouse_move`, `di_mouse_wheel` and `di_mouse_button` to be
+resolved by the patched Win32 runtime while native `scePad` and UserService
+imports remain for the final PS5 title linker.
+
+Neither test proves `scePadReadState` behavior on the user's console.
