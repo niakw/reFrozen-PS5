@@ -57,7 +57,8 @@ def patch_runtime(runtime: Path) -> None:
     fiber = runtime / "fiber.c"
     display = runtime / "display.c"
     user32 = runtime / "user32.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32)):
+    dinput = runtime / "dinput.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -252,6 +253,53 @@ uint32_t rt_primary_refresh(void);
         """    const char *desc = A0 ? "Built-in Display" : "Apple GPU";
 """,
         """    const char *desc = A0 ? "PS5 Display" : "PS5 GPU";
+""",
+    )
+
+
+    # DirectInput stays platform-neutral; only capture/visibility is delegated
+    # to the PS5 frontend. Keyboard/mouse state and COM behavior remain in the
+    # upstream Win64 implementation.
+    replace_once(
+        dinput,
+        """#include "rt.h"
+#include <pthread.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include "cocoa.h"
+""",
+        """#include "rt.h"
+#include <pthread.h>
+""",
+    )
+    replace_once(
+        dinput,
+        """static uint32_t now_ms(void) { return (uint32_t)(clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000); }
+""",
+        """static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+static uint32_t now_ms(void) { return (uint32_t)(monotonic_ns() / 1000000); }
+""",
+    )
+    replace_once(
+        dinput,
+        """static void set_mouse_capture(int on) {
+    static int captured;
+    if (on == captured) return;
+    captured = on;
+    CGAssociateMouseAndMouseCursorPosition(!on);
+    cocoa_cursor_visible(!on);
+}
+""",
+        """extern void rt_ps5_mouse_capture(int) __attribute__((weak));
+static void set_mouse_capture(int on) {
+    static int captured;
+    if (on == captured) return;
+    captured = on;
+    if (rt_ps5_mouse_capture) rt_ps5_mouse_capture(on);
+}
 """,
     )
 
