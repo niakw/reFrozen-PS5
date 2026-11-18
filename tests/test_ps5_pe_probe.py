@@ -5,8 +5,11 @@ import struct
 import tempfile
 import unittest
 
-from scripts.ps5.pe_probe import (inspect_pe, PEFormatError, _graphics_profile,
-                                  _scan_com_guid_markers, _scan_fixed_file_info)
+from scripts.ps5.pe_probe import (
+    inspect_pe, PEFormatError, _exception_import_profile, _graphics_profile,
+    _scan_com_guid_markers, _scan_fixed_file_info,
+)
+from scripts.ps5.synthetic_pe64 import make_pe64
 
 
 def synthetic_pe(machine: int, bits: int) -> bytes:
@@ -134,6 +137,46 @@ class PEProbeTest(unittest.TestCase):
         self.assertEqual(by_name["xaudio2_27"]["sections"], [".rdata"])
         self.assertNotIn("offset", str(markers).lower())
         self.assertNotIn("raw", str(markers).lower())
+
+
+    def test_x64_exception_directory_and_import_risks_are_advisory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp) / "unwind64.exe"
+            p.write_bytes(make_pe64())
+            result = inspect_pe(p)
+            profile = result["exception_directory"]
+            self.assertTrue(profile["present"])
+            self.assertTrue(profile["mapped_in_file"])
+            self.assertEqual(profile["size_bytes"], 12)
+            self.assertEqual(profile["x64_runtime_function_entries"], 1)
+            self.assertEqual(
+                profile["trust"], "structural_only_not_runtime_usage"
+            )
+            self.assertFalse(
+                result["exception_profile"]["requires_runtime_qualification"]
+            )
+
+        risks = _exception_import_profile([
+            {
+                "dll_normalized": "kernel32.dll",
+                "symbols": ["RaiseException", "RtlVirtualUnwind", "Sleep"],
+            },
+            {
+                "dll_normalized": "vcruntime140_1.dll",
+                "symbols": ["__CxxFrameHandler4", "#17"],
+            },
+        ])
+        self.assertTrue(risks["requires_runtime_qualification"])
+        self.assertEqual(risks["count"], 3)
+        self.assertEqual(
+            [(x["dll"], x["symbol"]) for x in risks["markers"]],
+            [
+                ("kernel32.dll", "RaiseException"),
+                ("kernel32.dll", "RtlVirtualUnwind"),
+                ("vcruntime140_1.dll", "__CxxFrameHandler4"),
+            ],
+        )
+        self.assertNotIn("offset", str(risks).lower())
 
     def test_bad_inputs_fail_closed(self):
         with tempfile.TemporaryDirectory() as temp:
