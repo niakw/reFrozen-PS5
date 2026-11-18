@@ -6,7 +6,7 @@ on:
       - 'src/**'
       - 'scripts/**'
       - 'tests/ps5/**'
-      - 'tests/test_ps5_portability_inventory.py'
+      - 'tests/test_ps5_*.py'
       - 'patches/**'
       - 'config/**'
       - 'CMakeLists.txt'
@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Run static scanner tests
-        run: python -m unittest discover -s tests -p test_ps5_portability_inventory.py -v
+        run: python -m unittest discover -s tests -p 'test_ps5_*.py' -v
       - name: Generate portability report
         run: python scripts/ps5_portability_inventory.py --output build/ps5-portability.json
       - name: Upload report
