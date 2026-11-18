@@ -167,7 +167,8 @@ jobs:
         run: |
           python3 -B scripts/ps5/map_win32_runtime_imports.py \
             build/win32-closure/object-results.tsv
-            build/win32-closure/import-map.json \
+            build/win32-closure/import-map.json
+            build/win32-closure/sdl-call-sites.tsv \
             build/win32-closure/objects \
             --out build/win32-closure/import-map.json
           python3 - <<'PY'
@@ -187,6 +188,29 @@ jobs:
                   f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 61"
               )
           print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=61")
+          PY
+      - name: Record patched public SDL call sites for adapter design
+        run: |
+          set -euo pipefail
+          RUNTIME="$GITHUB_WORKSPACE/build/x86recomp/src/runtime"
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path("build/x86recomp/src/runtime")
+          out=[]
+          pattern=re.compile(r"\b(SDL_[A-Za-z0-9_]+)\s*\(")
+          for path in sorted(root.rglob("*")):
+              if path.suffix not in {".cpp",".cc",".h",".hpp"} or not path.is_file():
+                  continue
+              for number,line in enumerate(path.read_text(errors="replace").splitlines(),1):
+                  names=pattern.findall(line)
+                  if names:
+                      rel=path.relative_to(root).as_posix()
+                      out.append(f"{rel}:{number}\t{','.join(sorted(set(names)))}\t{line.strip()}")
+          Path("build/win32-closure/sdl-call-sites.tsv").write_text(
+              "site\tsymbols\tsource_line\n" + "\n".join(out) + "\n"
+          )
+          print("SDL call-site lines:", len(out))
           PY
       - name: Preserve Win32 runtime closure symbol and ELF evidence only
         uses: actions/upload-artifact@v4
