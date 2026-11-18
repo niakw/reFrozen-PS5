@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 from scripts.ps5.pe_probe import (inspect_pe, PEFormatError, _graphics_profile,
-                                  _scan_com_guid_markers)
+                                  _scan_com_guid_markers, _scan_fixed_file_info)
 
 
 def synthetic_pe(machine: int, bits: int) -> bytes:
@@ -76,6 +76,37 @@ class PEProbeTest(unittest.TestCase):
             dynamic["ps5_initial_route"],
             "undetermined_dynamic_renderer_possible",
         )
+
+    def test_fixed_file_info_is_advisory_and_rsrc_only(self):
+        fixed = struct.pack(
+            "<13I",
+            0xFEEF04BD, 0x00010000,
+            (1 << 16) | 31, (1 << 16) | 12164,
+            (1 << 16) | 31, (1 << 16) | 12164,
+            0x3F, 0, 0x00040004, 1, 0, 0, 0,
+        )
+        prefix = b"X" * 48
+        raw = prefix + fixed + b"Y" * 32
+        sections = [{
+            "name": ".rsrc", "raw_offset": len(prefix),
+            "raw_size": len(fixed) + 32,
+        }]
+        info = _scan_fixed_file_info(raw, sections)
+        self.assertIsNotNone(info)
+        self.assertEqual(info["file_version"], "1.31.1.12164")
+        self.assertEqual(info["product_version"], "1.31.1.12164")
+        self.assertEqual(
+            info["trust"], "advisory_metadata_sha256_remains_authoritative")
+        self.assertIsNone(_scan_fixed_file_info(
+            raw, [{**sections[0], "name": ".data"}]))
+
+        damaged = bytearray(fixed)
+        struct.pack_into("<I", damaged, 4, 0x00020000)
+        self.assertIsNone(_scan_fixed_file_info(
+            prefix + damaged,
+            [{"name": ".rsrc", "raw_offset": len(prefix),
+              "raw_size": len(damaged)}],
+        ))
 
     def test_com_guid_markers_report_only_counts_and_sections(self):
         wasapi = bytes.fromhex("9503debc2fe57c468e3dc4579291692e")

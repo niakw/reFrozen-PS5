@@ -151,6 +151,51 @@ def _graphics_profile(imports: list[dict]) -> dict:
     }
 
 
+def _format_version(ms: int, ls: int) -> str:
+    return ".".join(str(part) for part in (
+        (ms >> 16) & 0xFFFF, ms & 0xFFFF,
+        (ls >> 16) & 0xFFFF, ls & 0xFFFF,
+    ))
+
+
+def _scan_fixed_file_info(raw: bytes, sections: list[dict]) -> dict | None:
+    """Find a sane VS_FIXEDFILEINFO in .rsrc.
+
+    Version resource metadata is advisory. It is useful for triage but can be
+    edited independently of executable code, so SHA-256 remains authoritative.
+    """
+    signature = struct.pack("<I", 0xFEEF04BD)
+    for section in sections:
+        if section.get("name") != ".rsrc":
+            continue
+        start = section["raw_offset"]
+        size = section["raw_size"]
+        if size <= 0 or start < 0 or start >= len(raw):
+            continue
+        data = raw[start:min(len(raw), start + size)]
+        search = 0
+        while True:
+            index = data.find(signature, search)
+            if index < 0:
+                break
+            if index + 52 <= len(data):
+                values = struct.unpack_from("<13I", data, index)
+                sig, struct_version, file_ms, file_ls, product_ms, product_ls = values[:6]
+                if sig == 0xFEEF04BD and struct_version == 0x00010000:
+                    return {
+                        "file_version": _format_version(file_ms, file_ls),
+                        "product_version": _format_version(product_ms, product_ls),
+                        "file_flags_mask": f"0x{values[6]:08x}",
+                        "file_flags": f"0x{values[7]:08x}",
+                        "file_os": f"0x{values[8]:08x}",
+                        "file_type": f"0x{values[9]:08x}",
+                        "file_subtype": f"0x{values[10]:08x}",
+                        "trust": "advisory_metadata_sha256_remains_authoritative",
+                    }
+            search = index + 4
+    return None
+
+
 def _scan_com_guid_markers(raw: bytes, sections: list[dict]) -> list[dict]:
     """Find selected Windows COM GUID byte patterns without decoding code.
 
@@ -380,6 +425,7 @@ def inspect_pe(path: Path) -> dict:
     imports = _parse_imports(raw, bits, optional, sections, size_of_headers)
     exports = _parse_exports(raw, bits, optional, sections, size_of_headers)
     com_guid_markers = _scan_com_guid_markers(raw, sections)
+    fixed_file_info = _scan_fixed_file_info(raw, sections)
     h = hashlib.sha256(raw).hexdigest()
     return {
         "file": path.name,
@@ -401,6 +447,7 @@ def inspect_pe(path: Path) -> dict:
         "import_symbol_count": sum(item["count"] for item in imports),
         "graphics_profile": _graphics_profile(imports),
         "com_guid_markers": com_guid_markers,
+        "version_resource": fixed_file_info,
         "capability_marker_note": (
             "Static GUID byte matches are evidence only; a marker can be "
             "present in unused code/data and does not prove runtime execution."
@@ -423,7 +470,7 @@ def main() -> int:
         except (PEFormatError, OSError) as exc:
             results.append({"file": path.name, "error": str(exc)})
             failed = True
-    report = json.dumps({"schema": 3, "results": results}, indent=2) + "\n"
+    report = json.dumps({"schema": 4, "results": results}, indent=2) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report, encoding="utf-8")
