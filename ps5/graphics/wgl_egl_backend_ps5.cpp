@@ -19,6 +19,7 @@ struct EglWglBackend::Impl {
   std::unordered_set<EGLContext> contexts;
   int width{};
   int height{};
+  int swap_interval{1};
   bool ready{};
 
   bool Open() {
@@ -80,6 +81,7 @@ struct EglWglBackend::Impl {
     config = {};
     width = 0;
     height = 0;
+    swap_interval = 1;
     ready = false;
   }
 };
@@ -180,7 +182,8 @@ bool EglWglBackend::MakeCurrent(void* user, BackendContext context,
                      self.impl_->surface, egl_context) != EGL_TRUE) {
     return false;
   }
-  return eglSwapInterval(self.impl_->display, 1) == EGL_TRUE;
+  return eglSwapInterval(self.impl_->display,
+                         self.impl_->swap_interval) == EGL_TRUE;
 }
 
 bool EglWglBackend::ClearCurrent(void* user) {
@@ -206,7 +209,9 @@ bool EglWglBackend::SetSwapInterval(void* user, int interval) {
   // PS5 EGL stack must explicitly prove before we expose it. Clamp to the
   // portable EGL semantics for now: 0 = immediate, positive = synchronized.
   if (interval < 0) return false;
-  return eglSwapInterval(self.impl_->display, interval) == EGL_TRUE;
+  if (eglSwapInterval(self.impl_->display, interval) != EGL_TRUE) return false;
+  self.impl_->swap_interval = interval;
+  return true;
 }
 
 void* EglWglBackend::GetProcAddress(void* user, const char* name) {
