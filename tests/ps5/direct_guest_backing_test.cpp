@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
+#include <sys/mman.h>
 
 using namespace refrozen::ps5;
 
@@ -33,7 +34,7 @@ struct Mock {
   int map(void** address, std::size_t bytes, int prot, int flags,
           std::int64_t pa, std::size_t alignment) {
     ++map_calls;
-    assert(bytes == 0x8000 && prot == 3 && flags == 0x10);
+    assert(bytes == 0x8000 && prot == (PROT_READ | PROT_WRITE) && flags == MAP_FIXED);
     assert(pa == physical && alignment == kPs5KernelGranule);
     if (scenario == 3) return -3;
     if (scenario == 4) {
@@ -63,7 +64,7 @@ struct Mock {
 
 DirectGuestBacking Run(Mock& mock) {
   return MapDirectGuestBacking(
-      0x140000000ULL, 0x5000, kPs5KernelGranule, 3, 0x10,
+      0x140000000ULL, 0x5000, kPs5KernelGranule, PROT_READ | PROT_WRITE, MAP_FIXED,
       [&] { return mock.extent(); },
       [&](std::int64_t lo, std::int64_t hi, std::size_t n, std::size_t a,
           int type, std::int64_t* physical) {
@@ -97,6 +98,48 @@ int main() {
         [&](std::int64_t p, std::size_t n) { return mock.release(p, n); });
     assert(released.status == DirectBackingReleaseStatus::ok);
     assert(mock.unmap_calls == 1 && mock.release_calls == 1);
+  }
+  {
+    Mock mock;
+    const auto r = MapDirectGuestBacking(
+        0x200000000ULL, 0x5000, kPs5KernelGranule,
+        PROT_READ | PROT_WRITE, MAP_FIXED,
+        [&] { return mock.extent(); },
+        [&](std::int64_t lo, std::int64_t hi, std::size_t n, std::size_t a,
+            int type, std::int64_t* physical) {
+          return mock.allocate(lo, hi, n, a, type, physical);
+        },
+        [&](void** address, std::size_t n, int prot, int flags,
+            std::int64_t physical, std::size_t a) {
+          return mock.map(address, n, prot, flags, physical, a);
+        },
+        [&](void* address, std::size_t n) { return mock.unmap(address, n); },
+        [&](std::int64_t physical, std::size_t n) {
+          return mock.release(physical, n);
+        });
+    assert(r.status == DirectBackingStatus::policy_rejected);
+    assert(mock.allocate_calls == 0);
+  }
+  {
+    Mock mock;
+    const auto r = MapDirectGuestBacking(
+        0x140000001ULL, 0x5000, kPs5KernelGranule,
+        PROT_READ | PROT_WRITE, MAP_FIXED,
+        [&] { return mock.extent(); },
+        [&](std::int64_t lo, std::int64_t hi, std::size_t n, std::size_t a,
+            int type, std::int64_t* physical) {
+          return mock.allocate(lo, hi, n, a, type, physical);
+        },
+        [&](void** address, std::size_t n, int prot, int flags,
+            std::int64_t physical, std::size_t a) {
+          return mock.map(address, n, prot, flags, physical, a);
+        },
+        [&](void* address, std::size_t n) { return mock.unmap(address, n); },
+        [&](std::int64_t physical, std::size_t n) {
+          return mock.release(physical, n);
+        });
+    assert(r.status == DirectBackingStatus::invalid_arguments);
+    assert(mock.allocate_calls == 0);
   }
   {
     Mock mock{.scenario = 1};
