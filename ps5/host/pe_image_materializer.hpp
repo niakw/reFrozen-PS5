@@ -81,6 +81,14 @@ struct PeMaterializeResult {
       result.section = a.name;
       return result;
     }
+    const auto a_memory_size = static_cast<std::size_t>(a_size);
+    const auto a_copy_size = std::min(a.file_size, a_memory_size);
+    if (a.file_offset > file.size() ||
+        a_copy_size > file.size() - a.file_offset) {
+      result.status = PeMaterializeStatus::section_file_truncated;
+      result.section = a.name;
+      return result;
+    }
     for (std::size_t j = i + 1; j < layout.sections.size(); ++j) {
       const auto& b = layout.sections[j];
       const std::uint64_t b_size = b.virtual_size ? b.virtual_size : b.file_size;
@@ -112,12 +120,6 @@ struct PeMaterializeResult {
     const auto memory_size = static_cast<std::size_t>(
         section.virtual_size ? section.virtual_size : section.file_size);
     const auto copy_size = std::min(section.file_size, memory_size);
-    if (section.file_offset > file.size() ||
-        copy_size > file.size() - section.file_offset) {
-      result.status = PeMaterializeStatus::section_file_truncated;
-      result.section = section.name;
-      return result;
-    }
     const auto destination_offset =
         static_cast<std::size_t>(section.address - layout.base);
     if (copy_size) {
