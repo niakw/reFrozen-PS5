@@ -60,7 +60,8 @@ def patch_runtime(runtime: Path) -> None:
     user32 = runtime / "user32.c"
     dinput = runtime / "dinput.c"
     xaudio2 = runtime / "xaudio2.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput, xaudio2)):
+    wasapi = runtime / "wasapi.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput, xaudio2, wasapi)):
         raise PatchError("pinned runtime is missing a required source file")
 
     replace_once(
@@ -405,6 +406,151 @@ static uint64_t monotonic_ns(void) {
 }
 
 // ---------------- IXAudio2Voice (shared by all voice kinds) ----------------
+""",
+    )
+
+
+    # WASAPI's COM surface and client ring stay intact. Replace the CoreAudio
+    # render callback with a PS5 AudioOut thread that consumes one native grain
+    # at a time and signals the existing event-driven renderer when room opens.
+    replace_once(
+        wasapi,
+        """#include "rt.h"
+#include "handles.h"
+#include <AudioToolbox/AudioToolbox.h>
+#include <pthread.h>
+""",
+        """#include "rt.h"
+#include "handles.h"
+#include "ps5_audio_out_bridge.h"
+#include <pthread.h>
+#include <time.h>
+""",
+    )
+    replace_once(
+        wasapi,
+        """    Obj obj;
+    int initialized, running;
+""",
+        """    Obj obj;
+    int initialized;
+    _Atomic int running;
+""",
+    )
+    replace_once(
+        wasapi,
+        """    AudioComponentInstance unit;
+    uint64_t played_total;
+""",
+        """    struct refrozen_ps5_audio_out out;
+    pthread_t output_thread;
+    _Atomic int quit;
+    int thread_started;
+    uint64_t played_total;
+""",
+    )
+    replace_between_once(
+        wasapi,
+        "static OSStatus render_cb",
+        "// client format -> stereo float into the ring",
+        """static void *output_main(void *unused) {
+    (void)unused;
+    float block[REFROZEN_PS5_AUDIO_GRAIN * 2];
+    while (!cl.quit) {
+        if (!cl.running) {
+            const struct timespec pause = {0, 1000000};
+            nanosleep(&pause, NULL);
+            continue;
+        }
+        uint64_t r = cl.rpos, w = cl.wpos, have = w - r;
+        uint64_t k = have < REFROZEN_PS5_AUDIO_GRAIN ? have : REFROZEN_PS5_AUDIO_GRAIN;
+        for (uint64_t i = 0; i < k; i++) {
+            uint64_t j = (r + i) % MAXFRAMES;
+            block[2 * i] = cl.ring[2 * j];
+            block[2 * i + 1] = cl.ring[2 * j + 1];
+        }
+        memset(block + 2 * k, 0,
+               (REFROZEN_PS5_AUDIO_GRAIN - k) * 2 * sizeof(float));
+        cl.rpos = r + k;
+        cl.played_total += REFROZEN_PS5_AUDIO_GRAIN;
+        signal_event(cl.event);
+        if (refrozen_ps5_audio_out_push_f32(
+                &cl.out, block, REFROZEN_PS5_AUDIO_GRAIN) < 0) {
+            rt_log("[wasapi] sceAudioOutOutput failed; output stopped\\n");
+            cl.running = 0;
+            break;
+        }
+    }
+    return NULL;
+}
+static int unit_open(void) {
+    if (cl.thread_started) return cl.out.handle >= 0;
+    cl.out.handle = -1;
+    if (refrozen_ps5_audio_out_open(&cl.out) < 0) {
+        rt_log("[wasapi] sceAudioOutOpen failed\\n");
+        return 0;
+    }
+    cl.quit = 0;
+    if (pthread_create(&cl.output_thread, NULL, output_main, NULL) != 0) {
+        refrozen_ps5_audio_out_close(&cl.out);
+        return 0;
+    }
+    cl.thread_started = 1;
+    return 1;
+}
+static uint64_t monotonic_ns(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+""",
+    )
+    replace_once(
+        wasapi,
+        """static void dv_GetId(CPU *c) { wr64(A1, G(utf8_to_w16("{0.0.0.00000000}.{macos-default-output}"))); RET(S_OK); }
+""",
+        """static void dv_GetId(CPU *c) { wr64(A1, G(utf8_to_w16("{0.0.0.00000000}.{ps5-default-output}"))); RET(S_OK); }
+""",
+    )
+    replace_once(
+        wasapi,
+        """        wr16(pv, 31); wr64(pv + 8, G(utf8_to_w16("Speakers (macOS)"))); RET(S_OK); return;   // VT_LPWSTR
+""",
+        """        wr16(pv, 31); wr64(pv + 8, G(utf8_to_w16("Speakers (PS5)"))); RET(S_OK); return;   // VT_LPWSTR
+""",
+    )
+    replace_once(
+        wasapi,
+        """           RATE, frames, ((uint32_t)A2 & 0x40000) ? ", event-driven" : "", cl.initialized ? "CoreAudio" : "no output");
+""",
+        """           RATE, frames, ((uint32_t)A2 & 0x40000) ? ", event-driven" : "", cl.initialized ? "PS5 AudioOut" : "no output");
+""",
+    )
+    replace_once(
+        wasapi,
+        """static void ac_Start(CPU *c) {
+    if (!cl.initialized) { RET(AUDCLNT_E_NOT_INITIALIZED); return; }
+    if (!cl.running && AudioOutputUnitStart(cl.unit) == noErr) cl.running = 1;
+    signal_event(cl.event);
+    RET(S_OK);
+}
+static void ac_Stop(CPU *c) { if (cl.running) { AudioOutputUnitStop(cl.unit); cl.running = 0; } RET(S_OK); }
+""",
+        """static void ac_Start(CPU *c) {
+    if (!cl.initialized) { RET(AUDCLNT_E_NOT_INITIALIZED); return; }
+    cl.running = 1;
+    signal_event(cl.event);
+    RET(S_OK);
+}
+static void ac_Stop(CPU *c) { cl.running = 0; RET(S_OK); }
+""",
+    )
+    replace_once(
+        wasapi,
+        """static void ck_GetPosition(CPU *c) { wr64(A1, cl.rpos); if (A2) wr64(A2, clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 100); RET(S_OK); }
+""",
+        """static void ck_GetPosition(CPU *c) { wr64(A1, cl.rpos); if (A2) wr64(A2, monotonic_ns() / 100); RET(S_OK); }
 """,
     )
 
