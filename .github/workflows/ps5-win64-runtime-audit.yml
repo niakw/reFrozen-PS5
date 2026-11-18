@@ -1,0 +1,50 @@
+name: PS5 Win64 runtime portability audit
+on:
+  pull_request:
+    paths:
+      - 'scripts/ps5/win64_runtime_portability.py'
+      - 'tests/test_ps5_win64_runtime_portability.py'
+      - '.github/workflows/ps5-win64-runtime-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit-pinned-runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Checkout pinned MIT Win64 runtime
+        uses: actions/checkout@v4
+        with:
+          repository: NightSightProductions/Recomp-Framework
+          ref: 63742ed02e039b292bbf341a33b3bb8c73457fea
+          path: build/nightsight
+          persist-credentials: false
+      - name: Run scanner unit tests
+        run: python -m unittest discover -s tests -p test_ps5_win64_runtime_portability.py -v
+      - name: Audit pinned runtime
+        run: |
+          python scripts/ps5/win64_runtime_portability.py build/nightsight/runtime --output build/win64-runtime-portability.json
+          python - <<'PY'
+          import json
+          p="build/win64-runtime-portability.json"
+          r=json.load(open(p))
+          f={x["path"]:x for x in r["files"]}
+          assert "arm64_context_asm" in f["fiber.c"]["blockers"], f["fiber.c"]
+          assert "mach_api" in f["rt.c"]["blockers"], f["rt.c"]
+          assert "mach_api" in f["kernel32.c"]["blockers"], f["kernel32.c"]
+          assert "apple_objc_ui" in f["cocoa.m"]["blockers"], f["cocoa.m"]
+          assert f["cpu.h"]["blockers"] == {}, f["cpu.h"]
+          assert r["root"] is None
+          print(json.dumps(r["summary"], indent=2, sort_keys=True))
+          PY
+      - name: Upload portability evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-runtime-portability-audit
+          path: build/win64-runtime-portability.json
+          if-no-files-found: error
+          retention-days: 14
