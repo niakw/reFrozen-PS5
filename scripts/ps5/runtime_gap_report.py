@@ -27,6 +27,16 @@ def reference_hle_surface(root: Path) -> set[tuple[str, str]]:
 
 def build_gap_report(census: dict, root: Path) -> dict:
     known = reference_hle_surface(root)
+    local_modules = {
+        result["file"].lower(): result
+        for result in census.get("results", [])
+        if "error" not in result and result.get("file")
+    }
+    local_exports = {}
+    for filename, result in local_modules.items():
+        by_ordinal = {item["ordinal"]: item for item in result.get("exports", [])}
+        by_name = {item["name"]: item for item in result.get("exports", []) if item.get("name")}
+        local_exports[filename] = (by_ordinal, by_name)
     modules = []
     totals = Counter()
     missing_by_dll: dict[str, list[str]] = defaultdict(list)
@@ -38,16 +48,34 @@ def build_gap_report(census: dict, root: Path) -> dict:
         for library in result.get("imports", []):
             dll = library["dll_normalized"]
             symbols_out = []
+            target = local_modules.get(dll)
+            ordinal_exports, named_exports = local_exports.get(dll, ({}, {}))
             for symbol in library.get("symbols", []):
+                resolved_name = None
                 if symbol.startswith("#"):
-                    status = "ordinal_needs_manual"
+                    try:
+                        ordinal = int(symbol[1:])
+                    except ValueError:
+                        ordinal = -1
+                    exported = ordinal_exports.get(ordinal)
+                    if exported is not None:
+                        resolved_name = exported.get("name") or symbol
+                        status = "local_module_ordinal"
+                    else:
+                        status = "ordinal_needs_manual"
+                elif target is not None:
+                    if not target.get("exports") or symbol in named_exports:
+                        status = "local_module"
+                    else:
+                        status = "local_module_export_missing"
                 elif (dll, symbol) in known:
                     status = "reference_hle"
                 else:
                     status = "unmapped"
                     missing_by_dll[dll].append(symbol)
                 totals[status] += 1
-                symbols_out.append({"name": symbol, "reference_status": status,
+                symbols_out.append({"name": symbol, "resolved_name": resolved_name,
+                                    "reference_status": status,
                                     "ps5_status": "unverified"})
             imports_out.append({
                 "dll": library["dll"],
@@ -65,8 +93,11 @@ def build_gap_report(census: dict, root: Path) -> dict:
         "schema": 1,
         "meaning": {
             "reference_hle": "handler exists in current reFrozen x86recomp patches; PS5 portability not proven",
-            "ordinal_needs_manual": "ordinal import cannot be matched by API name without DLL export/version evidence",
-            "unmapped": "no exact HLE handler found in current reFrozen patch set",
+            "local_module": "matching locally scanned DLL is present and the named export is not contradicted",
+            "local_module_ordinal": "ordinal resolved against the matching locally scanned DLL export table",
+            "local_module_export_missing": "matching local DLL was scanned but its export table does not contain the named import",
+            "ordinal_needs_manual": "ordinal import cannot be matched without the exact DLL export/version evidence",
+            "unmapped": "no matching local module or exact HLE handler found in current reFrozen patch set",
             "ps5_status": "always unverified until compiled and exercised on the PS5 runtime",
         },
         "reference_hle_count": len(known),
