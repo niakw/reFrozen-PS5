@@ -95,3 +95,23 @@ The resulting failures will be classified into:
 5. actual C++/ABI incompatibilities.
 
 Only after that census should production host adapters be changed.
+
+## Broad 63-unit PS5 syntax-compile baseline
+
+The broad compile job `44295378074` used the pinned patched x86recomp source, Payload SDK v0.42 and **headers only** from Encore's pinned SDL3 source. It produced:
+
+- **63** C++ translation units discovered in `src/runtime`.
+- **55** passed `prospero-clang++ -fsyntax-only`.
+- **8** failed at missing dependencies or generated headers. The first observed errors were:
+  - `audio/source.cpp`, `hle/binkw32.cpp`: FFmpeg `libavcodec/avcodec.h`;
+  - `gfx/d3d9_device.cpp`: `windows.h` (legacy Direct3D host adapter);
+  - `gfx/gpu_device.cpp`: generated `ff_frag.h`;
+  - `gfx/shader_compile.cpp`: `glslang/Public/ResourceLimits.h`;
+  - `hle/dbghelp.cpp`: LLVM `llvm/Demangle/Demangle.h`;
+  - `sse.cpp`, `x87.cpp`: SoftFloat `softfloat.h`.
+
+The passing set includes important Win32/PE32 host integration files: guest memory, allocator, PE image loader, process, dispatch, OpenGL HLE and Winsock HLE. This is **source parsing only**, not linking, runtime correctness or Warcraft execution.
+
+**Follow-up:** resolve/pin independent SDK-compatible dependencies, and isolate the unusable Direct3D host adapter without silently treating it as a functional renderer. The CI now fails if the count falls below 55 or one of nine critical host/Win32 units regresses.
+
+The separately executed private 1.26a lift translated all 11 exact guest modules **twice with byte-identical output**. However, that fact does *not* close the remaining Win32 HLE link, platform renderer, gameplay and PS5 hardware gates. The initial private post-lift summary assertion failed because GitHub log timestamps were not handled; the validation workflow is being corrected independently.
