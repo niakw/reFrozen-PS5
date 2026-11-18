@@ -84,6 +84,74 @@ _RUNTIME_DLL_AREAS = {
 }
 
 
+
+_EXCEPTION_IMPORT_RISKS = {
+    "raiseexception": "candidate runtime aborts for non-thread-name exceptions",
+    "rtlraiseexception": "exception dispatch semantics require qualification",
+    "rtlunwindex": "stack unwinding semantics require qualification",
+    "rtlunwind": "stack unwinding semantics require qualification",
+    "rtlvirtualunwind": "candidate runtime handler is currently a stub",
+    "rtllookupfunctionentry": "candidate runtime handler is currently a stub",
+    "__cxxframehandler3": "MSVC C++ exception handling requires qualification",
+    "__cxxframehandler4": "MSVC C++ exception handling requires qualification",
+    "__c_specific_handler": "MSVC SEH handling requires qualification",
+    "_cxxthrowexception": "MSVC C++ exception throwing requires qualification",
+    "setunhandledexceptionfilter": "top-level exception filter path requires qualification",
+    "unhandledexceptionfilter": "top-level exception filter path requires qualification",
+}
+
+
+def _exception_directory_profile(
+    bits: int, optional: bytes, sections: list[dict], size_of_headers: int,
+    raw_size: int,
+) -> dict:
+    dir_count_off = 92 if bits == 32 else 108
+    dir_base = 96 if bits == 32 else 112
+    if len(optional) < dir_count_off + 4:
+        return {"present": False, "reason": "optional_header_too_short"}
+    count = struct.unpack_from("<I", optional, dir_count_off)[0]
+    if count <= 3 or len(optional) < dir_base + 32:
+        return {"present": False, "reason": "exception_directory_absent"}
+    rva, size = struct.unpack_from("<II", optional, dir_base + 3 * 8)
+    if not rva or not size:
+        return {"present": False, "reason": "exception_directory_empty"}
+    mapped = True
+    try:
+        _rva_to_offset(rva, sections, size_of_headers, raw_size)
+    except PEFormatError:
+        mapped = False
+    entries = size // 12 if bits == 64 and size % 12 == 0 else None
+    return {
+        "present": True,
+        "rva": f"0x{rva:x}",
+        "size_bytes": size,
+        "mapped_in_file": mapped,
+        "x64_runtime_function_entries": entries,
+        "trust": "structural_only_not_runtime_usage",
+    }
+
+
+def _exception_import_profile(imports: list[dict]) -> dict:
+    markers = []
+    for library in imports:
+        dll = library.get("dll_normalized", "")
+        for symbol in library.get("symbols", []):
+            if not isinstance(symbol, str) or symbol.startswith("#"):
+                continue
+            risk = _EXCEPTION_IMPORT_RISKS.get(symbol.casefold())
+            if risk:
+                markers.append({"dll": dll, "symbol": symbol, "risk": risk})
+    return {
+        "markers": markers,
+        "count": len(markers),
+        "requires_runtime_qualification": bool(markers),
+        "note": (
+            "Import presence and x64 unwind metadata are static evidence only; "
+            "they do not prove that an exception path executes during gameplay."
+        ),
+    }
+
+
 class PEFormatError(ValueError):
     """Unsupported or malformed portable executable."""
 
@@ -426,6 +494,10 @@ def inspect_pe(path: Path) -> dict:
     exports = _parse_exports(raw, bits, optional, sections, size_of_headers)
     com_guid_markers = _scan_com_guid_markers(raw, sections)
     fixed_file_info = _scan_fixed_file_info(raw, sections)
+    exception_directory = _exception_directory_profile(
+        bits, optional, sections, size_of_headers, len(raw)
+    )
+    exception_profile = _exception_import_profile(imports)
     h = hashlib.sha256(raw).hexdigest()
     return {
         "file": path.name,
@@ -448,6 +520,8 @@ def inspect_pe(path: Path) -> dict:
         "graphics_profile": _graphics_profile(imports),
         "com_guid_markers": com_guid_markers,
         "version_resource": fixed_file_info,
+        "exception_directory": exception_directory,
+        "exception_profile": exception_profile,
         "capability_marker_note": (
             "Static GUID byte matches are evidence only; a marker can be "
             "present in unused code/data and does not prove runtime execution."
