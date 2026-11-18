@@ -167,10 +167,11 @@ def build_gap_report(
             "pe_bits": result.get("pe_bits"),
             "target_runtime": target_runtime,
             "imports": imports_out,
+            "capability_markers": result.get("com_guid_markers", []),
         })
 
     return {
-        "schema": 2,
+        "schema": 3,
         "meaning": {
             "reference_hle": (
                 "handler exists in reFrozen/x86recomp Win32 HLE for a PE32 target; "
