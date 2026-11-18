@@ -19,6 +19,7 @@
 
 extern "C" {
 void rt_log(const char* fmt, ...);
+void gamepad_start(void);
 
 std::uint64_t rt_last_surface_hwnd = 0;
 
@@ -30,6 +31,22 @@ void rt_request_screenshot(const char* path) {
 }
 void rt_vk_snapshot_request(void) {}
 void rt_vk_skip_next(void) {}
+
+int rt_ps5_graphics_init(void) __attribute__((weak));
+
+int rt_ps5_frontend_init(void) {
+  // Input can be initialized before a pad is physically connected; the
+  // polling path retries later if the first open fails.
+  gamepad_start();
+  if (rt_ps5_graphics_init) {
+    const int rc = rt_ps5_graphics_init();
+    if (rc != 0) {
+      rt_log("[ps5/frontend] graphics initialization failed: %d\n", rc);
+      return rc;
+    }
+  }
+  return 0;
+}
 }
 
 namespace {
