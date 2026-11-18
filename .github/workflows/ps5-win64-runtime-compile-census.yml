@@ -8,6 +8,8 @@ on:
       - 'scripts/ps5/patch_win64_boot_ps5.py'
       - 'ps5/runtime/win64_memory_bridge_ps5.h'
       - 'ps5/runtime/ps5_audio_out_bridge.*'
+      - 'ps5/runtime/commoncrypto_openssl_compat.h'
+      - 'tests/ps5/commoncrypto_openssl_compat_test.c'
       - 'tests/ps5/x86_64_fiber_swap_test.c'
       - '.github/workflows/ps5-win64-runtime-compile-census.yml'
   workflow_dispatch:
@@ -20,6 +22,8 @@ jobs:
     env:
       PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
       PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+      PACBREW_URL: https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/v0.40.2/ps5-payload-dev.tar.gz
+      PACBREW_SHA256: a85f65de418a8e6a898c6c3e3c870d50fff7618a200e4dd59ea9692af6ecec4d
     steps:
       - uses: actions/checkout@v4
       - name: Checkout pinned Win64 runtime
@@ -47,6 +51,27 @@ jobs:
           curl --fail --location --retry 3 --retry-delay 2 "$PS5_SDK_URL" -o build/sdk-download/sdk.zip
           printf '%s  %s\n' "$PS5_SDK_SHA256" build/sdk-download/sdk.zip | sha256sum -c -
           unzip -q build/sdk-download/sdk.zip -d build/sdk-root
+      - name: Validate OpenSSL compatibility shim on host
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libssl-dev
+          clang -std=gnu11 -O2 -Wall -Wextra -Werror -Wno-deprecated-declarations \
+            -Ips5/runtime tests/ps5/commoncrypto_openssl_compat_test.c -lcrypto \
+            -o build/commoncrypto-openssl-test
+          ./build/commoncrypto-openssl-test | tee build/commoncrypto-openssl-test.log
+          grep -q 'commoncrypto_openssl_compat: PASS' build/commoncrypto-openssl-test.log
+
+      - name: Download and verify Encore-compatible PacBrew OpenSSL
+        run: |
+          mkdir -p build/pacbrew
+          curl --fail --location --retry 3 --retry-delay 2 "$PACBREW_URL" -o build/pacbrew.tar.gz
+          printf '%s  %s\n' "$PACBREW_SHA256" build/pacbrew.tar.gz | sha256sum -c -
+          tar -xzf build/pacbrew.tar.gz -C build/pacbrew
+          CDEPS="$GITHUB_WORKSPACE/build/pacbrew/opt/ps5-payload-sdk/target/user/homebrew"
+          test -d "$CDEPS/include/openssl"
+          test -s "$CDEPS/lib/libcrypto.a"
+          echo "REFROZEN_PS5_CDEPS=$CDEPS" >> "$GITHUB_ENV"
+
       - name: Compile census
         env:
           PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
@@ -63,7 +88,7 @@ jobs:
               sed -n '1,16p' "build/runtime-census/logs/$unit.log"
             fi
           done < <(tail -n +2 build/runtime-census/results.tsv)
-          for unit in boot.c dinput.c display.c fiber.c files.c handles.c input.c kernel32.c native.c pdh.c rt.c sockets.c spvfix.c system.c teb.c user32.c wasapi.c window.c xaudio2.c xreverb.c; do
+          for unit in bcrypt.c boot.c dinput.c display.c fiber.c files.c handles.c input.c kernel32.c native.c pdh.c rt.c sockets.c spvfix.c system.c teb.c user32.c wasapi.c window.c xaudio2.c xreverb.c; do
             grep -Eq "^${unit}[[:space:]]+PASS$" build/runtime-census/results.tsv
           done
       - name: Upload compiler evidence

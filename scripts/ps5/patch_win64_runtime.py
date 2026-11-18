@@ -61,8 +61,49 @@ def patch_runtime(runtime: Path) -> None:
     dinput = runtime / "dinput.c"
     xaudio2 = runtime / "xaudio2.c"
     wasapi = runtime / "wasapi.c"
-    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput, xaudio2, wasapi)):
+    bcrypt = runtime / "bcrypt.c"
+    if not all(path.is_file() for path in (system, window, kernel32, files, handles, pdh, fiber, display, user32, dinput, xaudio2, wasapi, bcrypt)):
         raise PatchError("pinned runtime is missing a required source file")
+
+    # CommonCrypto is macOS-only. Keep the Win64 bcrypt/CNG surface and
+    # route its existing hash/HMAC/AES implementation through the small
+    # OpenSSL compatibility header built from Encore's pinned PacBrew libcrypto.
+    replace_once(
+        bcrypt,
+        """#include <CommonCrypto/CommonCrypto.h>
+""",
+        """#include "commoncrypto_openssl_compat.h"
+""",
+    )
+    replace_once(
+        bcrypt,
+        """    Hash *d = malloc(sizeof *d); *d = *h;
+    wr64(A1, G(d));
+    RET(STATUS_SUCCESS);
+}
+void I_bcrypt_dll_BCryptDestroyHash(CPU *c) { Hash *h = hash_of(A0); if (!h) { RET(STATUS_INVALID_HANDLE); return; } h->magic = 0; free(h); RET(0); }
+""",
+        """    Hash *d = calloc(1, sizeof *d);
+    if (!d) { RET(STATUS_INVALID_PARAMETER); return; }
+    d->magic = h->magic; d->alg = h->alg; d->hmac = h->hmac;
+    if (h->hmac) {
+        if (!refrozen_ps5_cchmac_copy(&d->u.hm, &h->u.hm)) {
+            free(d); RET(STATUS_INVALID_PARAMETER); return;
+        }
+    } else {
+        d->u = h->u;
+    }
+    wr64(A1, G(d));
+    RET(STATUS_SUCCESS);
+}
+void I_bcrypt_dll_BCryptDestroyHash(CPU *c) {
+    Hash *h = hash_of(A0);
+    if (!h) { RET(STATUS_INVALID_HANDLE); return; }
+    if (h->hmac) refrozen_ps5_cchmac_cleanup(&h->u.hm);
+    h->magic = 0; free(h); RET(0);
+}
+""",
+    )
 
     replace_once(
         system,
@@ -1037,7 +1078,7 @@ def main() -> int:
         patch_runtime(args.runtime)
     except (OSError, PatchError) as exc:
         parser.error(str(exc))
-    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c pdh.c fiber.c")
+    print("PS5 Win64 runtime portability edits applied: system.c window.c kernel32.c files.c handles.c pdh.c fiber.c display.c user32.c dinput.c xaudio2.c wasapi.c bcrypt.c")
     return 0
 
 
