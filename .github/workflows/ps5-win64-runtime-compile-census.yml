@@ -38,16 +38,16 @@ jobs:
         run: |
           bash scripts/ps5/compile-win64-runtime-census.sh build/nightsight/runtime build/runtime-census
           cat build/runtime-census/results.tsv
-          for unit in files.c input.c kernel32.c native.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
-            grep -Eq "^${unit}[[:space:]]+PASS$" build/runtime-census/results.tsv
-          done
           echo "== First compiler diagnostics for non-portable units =="
           while read -r unit status; do
             if [[ "$status" == FAIL ]]; then
               echo "--- $unit"
-              sed -n '1,8p' "build/runtime-census/logs/$unit.log"
+              sed -n '1,12p' "build/runtime-census/logs/$unit.log"
             fi
           done < <(tail -n +2 build/runtime-census/results.tsv)
+          for unit in files.c handles.c input.c kernel32.c native.c sockets.c spvfix.c system.c teb.c window.c xreverb.c; do
+            grep -Eq "^${unit}[[:space:]]+PASS$" build/runtime-census/results.tsv
+          done
       - name: Upload compiler evidence
         uses: actions/upload-artifact@v4
         with:
