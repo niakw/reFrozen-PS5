@@ -70,7 +70,7 @@ int main() {
   if (!loaded.ok()) {
     Fail("materialize", static_cast<int>(loaded.status));
     const auto released = refrozen::ps5::ReleaseGuestImagePs5(mapping);
-    return released.ok() ? 1 : 2;
+    return released.status == refrozen::ps5::DirectBackingReleaseStatus::ok ? 1 : 2;
   }
 
   auto* const value = reinterpret_cast<volatile std::uint32_t*>(
@@ -78,7 +78,7 @@ int main() {
   if (*value != 41) {
     Fail("initial-data", static_cast<int>(*value));
     const auto released = refrozen::ps5::ReleaseGuestImagePs5(mapping);
-    return released.ok() ? 1 : 2;
+    return released.status == refrozen::ps5::DirectBackingReleaseStatus::ok ? 1 : 2;
   }
 
   CPU state{};
@@ -93,11 +93,11 @@ int main() {
       state.fn == 0x140001000ULL;
 
   const auto released = refrozen::ps5::ReleaseGuestImagePs5(mapping);
-  if (!released.ok()) {
+  if (released.status != refrozen::ps5::DirectBackingReleaseStatus::ok) {
     std::fprintf(stderr,
                  "REFROZEN_PS5_WIN64_CHAIN pass=0 stage=release status=%d\n",
                  static_cast<int>(released.status));
-    return released.requires_process_abort() ? 2 : 1;
+    return 2;
   }
   if (!semantics_ok) {
     std::fprintf(stderr,
