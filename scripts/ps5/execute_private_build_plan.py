@@ -99,7 +99,7 @@ def execute_plan(
         )
 
     executable = executable.resolve()
-    observed = _verify_planned_pe(entry, executable, "input executable")
+    _verify_planned_pe(entry, executable, "input executable")
     expected_sha = str(entry.get("sha256") or "").lower()
 
     private_root = (repo_root.resolve() / "private")
@@ -108,17 +108,6 @@ def execute_plan(
         output.relative_to(private_root.resolve())
     except ValueError as exc:
         raise PlanExecutionError("output must stay under repository /private") from exc
-
-    try:
-        lift = lift_private(
-            executable,
-            lifter_root,
-            output,
-            repo_root,
-            require_pinned_lifter=require_pinned_lifter,
-        )
-    except PrivateLiftError as exc:
-        raise PlanExecutionError(str(exc)) from exc
 
     module_specs = plan.get("local_modules") or []
     if not isinstance(module_specs, list):
@@ -129,7 +118,8 @@ def execute_plan(
     if resolved_install is not None and not resolved_install.is_dir():
         raise PlanExecutionError("install_root is not a directory")
 
-    module_reports = []
+    # Verify the complete private input set before generating any derivative C.
+    prepared_modules = []
     for index, spec in enumerate(module_specs):
         if not isinstance(spec, dict):
             raise PlanExecutionError("planned local module entry must be an object")
@@ -153,6 +143,23 @@ def execute_plan(
             for ch in module_name
         ).strip("._-") or "module"
         module_output = output / "modules" / f"{index:03d}-{safe_stem.lower()}"
+        prepared_modules.append(
+            (spec, module_path, module_name, rebase, module_output)
+        )
+
+    try:
+        lift = lift_private(
+            executable,
+            lifter_root,
+            output,
+            repo_root,
+            require_pinned_lifter=require_pinned_lifter,
+        )
+    except PrivateLiftError as exc:
+        raise PlanExecutionError(str(exc)) from exc
+
+    module_reports = []
+    for spec, module_path, module_name, rebase, module_output in prepared_modules:
         try:
             module_lift = lift_private(
                 module_path,
