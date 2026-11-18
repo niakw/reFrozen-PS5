@@ -1,0 +1,95 @@
+name: PS5 synthetic memory-probe ELF
+
+on:
+  pull_request:
+    paths:
+      - 'ps5/host/**'
+      - 'ps5/runtime/**'
+      - 'tests/ps5/ps5_guest_memory_probe_main.cpp'
+      - 'scripts/ps5/build-memory-probe-elf.sh'
+      - '.github/workflows/ps5-sdk-link.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-synthetic-probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PS5_SDK_URL: https://github.com/ps5-payload-dev/sdk/releases/download/v0.42/ps5-payload-sdk.zip
+      PS5_SDK_SHA256: 8cfbc7cd5811e719eb4f0c47eea668d3dc7b40bc8ab11c4a5031d40c23ec02da
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 18 and archive tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-18 llvm-18 lld-18 curl unzip file
+
+      - name: Download and verify Payload SDK v0.42
+        run: |
+          mkdir -p build/sdk-download build/sdk-root
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "$PS5_SDK_URL" -o build/sdk-download/ps5-payload-sdk.zip
+          printf '%s  %s\n' "$PS5_SDK_SHA256" \
+            build/sdk-download/ps5-payload-sdk.zip | sha256sum -c -
+          unzip -q build/sdk-download/ps5-payload-sdk.zip -d build/sdk-root
+          test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang++
+          test -f build/sdk-root/ps5-payload-sdk/target/lib/crt1.o
+          test -f build/sdk-root/ps5-payload-sdk/ldscripts/elf_x86_64.x
+
+      - name: Link synthetic PS5 guest-memory probe
+        env:
+          PS5_PAYLOAD_SDK: ${{ github.workspace }}/build/sdk-root/ps5-payload-sdk
+        run: |
+          bash scripts/ps5/build-memory-probe-elf.sh
+          test -s build/ps5-probe/refrozen-guest-memory-probe.elf
+
+      - name: Inspect linked PS5 ELF
+        run: |
+          ELF=build/ps5-probe/refrozen-guest-memory-probe.elf
+          file "$ELF" | tee build/ps5-probe/file.txt
+          llvm-readelf-18 -h -l -d "$ELF" > build/ps5-probe/elf-metadata.txt
+          llvm-nm-18 -u "$ELF" > build/ps5-probe/undefined-symbols.txt || true
+          cat build/ps5-probe/elf-metadata.txt
+          cat build/ps5-probe/undefined-symbols.txt
+          sha256sum "$ELF" > build/ps5-probe/SHA256SUMS
+          grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' build/ps5-probe/elf-metadata.txt
+          grep -Eq 'Type:.*DYN' build/ps5-probe/elf-metadata.txt
+          for lib in libkernel_web.sprx libSceLibcInternal.sprx libSceNet.sprx; do
+            grep -Fq "Shared library: [$lib]" build/ps5-probe/elf-metadata.txt
+          done
+          for symbol in \
+            sceKernelAllocateDirectMemory \
+            sceKernelGetDirectMemorySize \
+            sceKernelMapDirectMemory \
+            sceKernelReleaseDirectMemory \
+            sceKernelReserveVirtualRange \
+            munmap; do
+            grep -q "$symbol" build/ps5-probe/undefined-symbols.txt
+          done
+          if grep -qE '/lib(64)?/ld-linux|/libexec/ld-elf' build/ps5-probe/elf-metadata.txt; then
+            echo "Unexpected desktop ELF interpreter" >&2
+            exit 1
+          fi
+          if strings "$ELF" | grep -q '/home/runner/work/'; then
+            echo "Build path leaked into synthetic probe" >&2
+            exit 1
+          fi
+          cat build/ps5-probe/SHA256SUMS
+
+      - name: Upload synthetic PS5 probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: refrozen-ps5-synthetic-memory-probe
+          path: |
+            build/ps5-probe/refrozen-guest-memory-probe.elf
+            build/ps5-probe/file.txt
+            build/ps5-probe/elf-metadata.txt
+            build/ps5-probe/undefined-symbols.txt
+            build/ps5-probe/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
