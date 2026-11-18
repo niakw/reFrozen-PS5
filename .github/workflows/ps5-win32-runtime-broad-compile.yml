@@ -4,6 +4,9 @@ on:
     paths:
       - 'patches/x86recomp/**'
       - 'docs/ps5/WIN32_RUNTIME_PS5_CENSUS.md'
+      - 'docs/ps5/WIN32_SDL_ROUTE.md'
+      - 'scripts/ps5/map_win32_runtime_imports.py'
+      - 'tests/test_ps5_win32_import_map.py'
       - '.github/workflows/ps5-win32-runtime-broad-compile.yml'
   workflow_dispatch:
 permissions:
@@ -160,6 +163,31 @@ jobs:
             "$GITHUB_WORKSPACE/build/encore-vendor/sources/eden-cpm/sdl3/release-3.4.8/include" \
             "$GITHUB_WORKSPACE/build/win32-broad-census/results.tsv" \
             "$GITHUB_WORKSPACE/build/win32-closure"
+      - name: Map unresolved host imports back to runtime source units
+        run: |
+          python3 -B scripts/ps5/map_win32_runtime_imports.py \
+            build/win32-closure/object-results.tsv
+            build/win32-closure/import-map.json \
+            build/win32-closure/objects \
+            --out build/win32-closure/import-map.json
+          python3 - <<'PY'
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+          d=json.loads(Path("build/win32-closure/import-map.json").read_text())
+          print("unique SDL symbols:", d["unique_sdl_symbols"])
+          users=defaultdict(set)
+          for row in d["mappings"]:
+              if row["symbol"].startswith("SDL_"):
+                  users[row["category"]].add(row["file"])
+          for category, files in sorted(users.items()):
+              print(category, len(files), ", ".join(sorted(files)))
+          if d["unique_sdl_symbols"] != 61:
+              raise SystemExit(
+                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 61"
+              )
+          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=61")
+          PY
       - name: Preserve Win32 runtime closure symbol and ELF evidence only
         uses: actions/upload-artifact@v4
         with:
