@@ -46,6 +46,7 @@ jobs:
           while read -r unit status; do
             if [[ "$status" == FAIL ]]; then
               echo "--- $unit"
+              grep -n -m 8 -E 'fatal error:| error:' "build/runtime-census/logs/$unit.log" || true
               sed -n '1,16p' "build/runtime-census/logs/$unit.log"
             fi
           done < <(tail -n +2 build/runtime-census/results.tsv)
