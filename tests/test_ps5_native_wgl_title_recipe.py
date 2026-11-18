@@ -2,10 +2,14 @@
 from pathlib import Path
 import json
 import re
+import subprocess
 import unittest
 
 
 class NativeWglTitleRecipeTest(unittest.TestCase):
+    def test_packager_shell_syntax(self):
+        subprocess.run(["bash", "-n", "scripts/ps5/build-native-wgl-title.sh"], check=True)
+
     def test_dedicated_title_identity_is_valid(self):
         script = Path("scripts/ps5/build-native-wgl-title.sh").read_text()
         self.assertIn("TITLE=PPSA99006", script)
