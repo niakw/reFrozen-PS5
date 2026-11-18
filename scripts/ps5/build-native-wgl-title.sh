@@ -15,7 +15,7 @@ done
 [[ -x "$SDK/bin/prospero-lld" && -d "$SDK/target/include" ]] || { echo "invalid PS5_PAYLOAD_SDK" >&2; exit 2; }
 [[ -f "$GLSDK/manifest.sha256" && -f "$GLSDK/lib/libPS5OpenGL.a" ]] || { echo "invalid PS5 OpenGL SDK" >&2; exit 2; }
 [[ -f "$GLROOT/native-app/app_heap.c" && -f "$GLROOT/native-app/ps5-pie.ld" ]] || { echo "invalid OpenGL source root" >&2; exit 2; }
-[[ -f "$TEMPLATE/Makefile" && -x "$TEMPLATE/tools/build.sh" ]] || { echo "invalid native boilerplate" >&2; exit 2; }
+[[ -f "$TEMPLATE/Makefile" && -f "$TEMPLATE/tools/build.sh" ]] || { echo "invalid native boilerplate" >&2; exit 2; }
 (cd "$GLSDK" && sha256sum --check --strict manifest.sha256 >/dev/null)
 
 TITLE=PPSA99006
