@@ -56,10 +56,28 @@ jobs:
           llvm-nm-18 -u "$ELF" > build/ps5-probe/undefined-symbols.txt || true
           sha256sum "$ELF" > build/ps5-probe/SHA256SUMS
           grep -Eq 'Machine:.*X86-64|Machine:.*x86-64' build/ps5-probe/elf-metadata.txt
+          grep -Eq 'Type:.*DYN' build/ps5-probe/elf-metadata.txt
+          for lib in libkernel_web.sprx libSceLibcInternal.sprx libSceNet.sprx; do
+            grep -q "Shared library: [$lib]" build/ps5-probe/elf-metadata.txt
+          done
+          for symbol in \
+            sceKernelAllocateDirectMemory \
+            sceKernelGetDirectMemorySize \
+            sceKernelMapDirectMemory \
+            sceKernelReleaseDirectMemory \
+            sceKernelReserveVirtualRange \
+            munmap; do
+            grep -q "$symbol" build/ps5-probe/undefined-symbols.txt
+          done
           if grep -qE '/lib(64)?/ld-linux|/libexec/ld-elf' build/ps5-probe/elf-metadata.txt; then
             echo "Unexpected desktop ELF interpreter" >&2
             exit 1
           fi
+          if strings "$ELF" | grep -q '/home/runner/work/'; then
+            echo "Build path leaked into synthetic probe" >&2
+            exit 1
+          fi
+          cat build/ps5-probe/SHA256SUMS
 
       - name: Upload synthetic PS5 probe
         uses: actions/upload-artifact@v4
