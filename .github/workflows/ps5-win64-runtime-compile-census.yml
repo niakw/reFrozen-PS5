@@ -4,6 +4,7 @@ on:
     paths:
       - 'scripts/ps5/compile-win64-runtime-census.sh'
       - 'scripts/ps5/patch_win64_runtime.py'
+      - 'tests/ps5/x86_64_fiber_swap_test.c'
       - '.github/workflows/ps5-win64-runtime-compile-census.yml'
   workflow_dispatch:
 permissions:
@@ -26,6 +27,12 @@ jobs:
           persist-credentials: false
       - name: Apply fail-closed PS5 portability edits
         run: python scripts/ps5/patch_win64_runtime.py build/nightsight/runtime
+      - name: Execute x86-64 fiber context switch contract
+        run: |
+          mkdir -p build
+          clang -std=gnu11 -O2 -Wall -Wextra -Werror tests/ps5/x86_64_fiber_swap_test.c -o build/fiber-swap-test
+          ./build/fiber-swap-test | tee build/fiber-swap-test.log
+          grep -q "x86_64_fiber_swap: PASS" build/fiber-swap-test.log
       - name: Download and verify Payload SDK
         run: |
           mkdir -p build/sdk-download build/sdk-root
