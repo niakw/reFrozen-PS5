@@ -79,7 +79,7 @@ class InputGateTest(unittest.TestCase):
                 (root / name).write_bytes(b"MPQ\x1a" + b"\x00" * 1024)
             result = validate(census, root)
             self.assertTrue(result["ready_for_game_launch"])
-            (root / "War3x.mpq").unlink()
+            (root / "war3x.mpq").unlink()
             (root / "war3x.mpq").write_bytes(
                 b"version https://git-lfs.github.com/spec/v1\n"
                 b"oid sha256:" + b"a" * 64 + b"\nsize 1234\n"
