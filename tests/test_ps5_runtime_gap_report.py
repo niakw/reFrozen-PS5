@@ -4,7 +4,8 @@ import tempfile
 import unittest
 
 from scripts.ps5.runtime_gap_report import (
-    build_gap_report, reference_hle_surface, reference_win64_surface,
+    build_gap_report, reference_hle_surface, reference_win64_handlers,
+    reference_win64_surface,
 )
 
 
@@ -92,6 +93,9 @@ class RuntimeGapReportTest(unittest.TestCase):
                 [x["reference_status"] for x in symbols],
                 ["reference_win64_hle", "reference_other_arch", "unmapped"],
             )
+            self.assertEqual(symbols[0]["reference_units"], ["kernel32.c"])
+            self.assertEqual(symbols[1]["reference_units"], [])
+            self.assertEqual(symbols[2]["reference_units"], [])
             self.assertEqual(
                 report["missing_by_dll"],
                 {"kernel32.dll": ["CreateFileW", "MissingApi"]},
@@ -107,6 +111,13 @@ class RuntimeGapReportTest(unittest.TestCase):
                 reference_win64_surface(win64),
                 {("kernel32.dll", "VirtualAlloc"),
                  ("kernel32.dll", "CreateThread")},
+            )
+            self.assertEqual(
+                reference_win64_handlers(win64),
+                {
+                    ("kernel32.dll", "VirtualAlloc"): {"kernel32.c"},
+                    ("kernel32.dll", "CreateThread"): {"kernel32.c"},
+                },
             )
 
     def test_local_guest_dll_resolves_named_and_ordinal_imports(self):
@@ -186,7 +197,7 @@ class RuntimeGapReportTest(unittest.TestCase):
             }
             report = build_gap_report(census, root)
             module = report["modules"][0]
-            self.assertEqual(report["schema"], 3)
+            self.assertEqual(report["schema"], 4)
             self.assertEqual(module["version_resource"]["file_version"],
                              "1.31.1.12164")
             self.assertEqual(module["imports"][0]["runtime_area"], "crypto")

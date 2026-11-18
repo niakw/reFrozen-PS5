@@ -42,20 +42,33 @@ def reference_hle_surface(root: Path) -> set[tuple[str, str]]:
     return surface
 
 
-def reference_win64_surface(runtime_root: Path | None) -> set[tuple[str, str]]:
-    """Find explicit I_<dll>_dll_<api>(CPU*) handlers in a Win64 runtime tree."""
+def reference_win64_handlers(
+    runtime_root: Path | None,
+) -> dict[tuple[str, str], set[str]]:
+    """Map explicit Win64 HLE handlers to their implementation translation units.
+
+    Only implementation sources count as evidence. Header declarations are not
+    sufficient to prove that an imported API has code behind it. Returned paths
+    are relative to the runtime root so private absolute paths never leak.
+    """
     if runtime_root is None:
-        return set()
+        return {}
     runtime_root = runtime_root.resolve()
     if not runtime_root.is_dir():
-        return set()
-    surface: set[tuple[str, str]] = set()
-    for suffix in ("*.c", "*.cc", "*.cpp", "*.m", "*.mm", "*.h", "*.hpp"):
+        return {}
+    handlers: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for suffix in ("*.c", "*.cc", "*.cpp", "*.m", "*.mm"):
         for path in sorted(runtime_root.rglob(suffix)):
             text = path.read_text(encoding="utf-8", errors="replace")
+            unit = path.relative_to(runtime_root).as_posix()
             for dll, api in WIN64_HLE_RE.findall(text):
-                surface.add((dll.lower() + ".dll", api))
-    return surface
+                handlers[(dll.lower() + ".dll", api)].add(unit)
+    return handlers
+
+
+def reference_win64_surface(runtime_root: Path | None) -> set[tuple[str, str]]:
+    """Compatibility helper: the implemented Win64 HLE API surface."""
+    return set(reference_win64_handlers(runtime_root))
 
 
 def _target_runtime(result: dict) -> str:
@@ -71,7 +84,8 @@ def build_gap_report(
     census: dict, root: Path, win64_runtime_root: Path | None = None
 ) -> dict:
     known32 = reference_hle_surface(root)
-    known64 = reference_win64_surface(win64_runtime_root)
+    known64_handlers = reference_win64_handlers(win64_runtime_root)
+    known64 = set(known64_handlers)
     _, reference32_complete = _reference_hle_files(root)
     reference64_complete = (
         win64_runtime_root is not None and win64_runtime_root.resolve().is_dir()
@@ -116,6 +130,7 @@ def build_gap_report(
 
             for symbol in library.get("symbols", []):
                 resolved_name = None
+                reference_units: list[str] = []
                 if symbol.startswith("#"):
                     try:
                         ordinal = int(symbol[1:])
@@ -138,6 +153,10 @@ def build_gap_report(
                         if target_runtime == "win64_candidate"
                         else "reference_hle"
                     )
+                    if status == "reference_win64_hle":
+                        reference_units = sorted(
+                            known64_handlers.get((dll, symbol), ())
+                        )
                 elif (dll, symbol) in other_surface:
                     # Useful implementation evidence, but the ABI/runtime model differs.
                     status = "reference_other_arch"
@@ -151,6 +170,7 @@ def build_gap_report(
                     "name": symbol,
                     "resolved_name": resolved_name,
                     "reference_status": status,
+                    "reference_units": reference_units,
                     "ps5_status": "unverified",
                 })
 
@@ -172,15 +192,16 @@ def build_gap_report(
         })
 
     return {
-        "schema": 3,
+        "schema": 4,
         "meaning": {
             "reference_hle": (
                 "handler exists in reFrozen/x86recomp Win32 HLE for a PE32 target; "
                 "PS5 portability not proven"
             ),
             "reference_win64_hle": (
-                "handler exists in the supplied Win64 runtime source for a PE32+ target; "
-                "PS5 portability not proven"
+                "handler exists in the supplied Win64 runtime implementation source for "
+                "a PE32+ target; reference_units names the source translation unit(s), "
+                "whose PS5 compilation must be proven separately"
             ),
             "reference_other_arch": (
                 "handler exists only in the other architecture runtime; useful as a "
