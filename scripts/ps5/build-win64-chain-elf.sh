@@ -17,7 +17,7 @@ if [[ -z "$FW" || ! -f "$FW/runtime/cpu.h" ]]; then
   echo "NIGHTSIGHT_FW must point to the pinned Recomp-Framework checkout" >&2
   exit 2
 fi
-if [[ -z "$GEN" || ! -s "$GEN/code_0000.c" || ! -s "$GEN/tables.c" || ! -s "$GEN/funcs.h" ]]; then
+if [[ -z "$GEN" || ! -s "$GEN/tables.c" || ! -s "$GEN/funcs.h" ]]; then
   echo "REFROZEN_GENERATED_DIR must contain synthetic Win64 translated C" >&2
   exit 2
 fi
@@ -39,21 +39,15 @@ COMMON_MAP=(
   "-fdebug-prefix-map=$SDK/=sdk/"
 )
 
-"$SDK/bin/prospero-clang" \
-  -std=gnu11 -O2 -g0 \
-  "${COMMON_MAP[@]}" \
-  -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-label \
-  -Wno-unknown-pragmas \
-  -I"$FW/runtime" -I"$GEN" \
-  -c "$GEN/code_0000.c" -o "$OUTDIR/synthetic-win64-lift.o"
-
-"$SDK/bin/prospero-clang" \
-  -std=gnu11 -O2 -g0 \
-  "${COMMON_MAP[@]}" \
-  -Wno-unused-variable -Wno-unused-but-set-variable -Wno-unused-label \
-  -Wno-unknown-pragmas \
-  -I"$FW/runtime" -I"$GEN" \
-  -c "$GEN/tables.c" -o "$OUTDIR/synthetic-win64-tables.o"
+REFROZEN_GENERATED_OUT="$OUTDIR/generated-objects" \
+  BUILD_JOBS="${BUILD_JOBS:-2}" \
+  bash "$ROOT/scripts/ps5/compile-win64-generated-objects.sh" \
+  > "$OUTDIR/generated-compile.log"
+mapfile -t GEN_OBJECTS < "$OUTDIR/generated-objects/objects.list"
+if (( ${#GEN_OBJECTS[@]} < 2 )); then
+  echo "generated-object compiler returned too few objects" >&2
+  exit 1
+fi
 
 "$SDK/bin/prospero-clang++" \
   -std=c++20 -O1 -g \
@@ -66,8 +60,7 @@ COMMON_MAP=(
   "$ROOT/ps5/runtime/exact_reservation_ps5.cpp" \
   "$ROOT/ps5/runtime/direct_guest_backing_ps5.cpp" \
   "$ROOT/ps5/runtime/guest_image_mapping_ps5.cpp" \
-  "$OUTDIR/synthetic-win64-lift.o" \
-  "$OUTDIR/synthetic-win64-tables.o" \
+  "${GEN_OBJECTS[@]}" \
   -o "$OUT"
 
 test -s "$OUT"
