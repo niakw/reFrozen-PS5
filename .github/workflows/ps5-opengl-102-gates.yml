@@ -112,7 +112,11 @@ jobs:
           for symbol in eglGetDisplay eglInitialize eglCreateContext eglMakeCurrent eglSwapBuffers; do
             grep -q " $symbol$" "$OUT/symbols.txt"
           done
-          if strings "$ELF" | grep -E '/home/runner/work/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
+          # The preserved SDK itself contains public upstream CI provenance
+          # (/home/runner/work/ps5-opengl/...). Do not misclassify that as a
+          # private leak. Reject only this project's runner path and game names.
+          strings "$ELF" | grep -F '/home/runner/work/ps5-opengl/ps5-opengl/' > "$OUT/public-sdk-provenance.txt" || true
+          if strings "$ELF" | grep -E '/home/runner/work/refrozen_ps5/|Warcraft|Blizzard' > "$OUT/forbidden-strings.txt"; then
             cat "$OUT/forbidden-strings.txt" >&2
             exit 1
           fi
@@ -136,7 +140,8 @@ jobs:
           sha256sum "$DIST/eboot.bin" "$DIST/sce_module/libc.prx" | tee "$ROOT/build/dist-sha256.txt"
           strings "$ROOT/build/eboot.elf" > "$ROOT/build/eboot-strings.txt"
           grep -q 'REFROZEN_PS5_WGL_TITLE pass=%d' "$ROOT/build/eboot-strings.txt"
-          if grep -E 'Warcraft|Blizzard|/home/runner/work/' "$ROOT/build/eboot-strings.txt" > "$ROOT/build/forbidden-strings.txt"; then
+          grep -F '/home/runner/work/ps5-opengl/ps5-opengl/' "$ROOT/build/eboot-strings.txt" > "$ROOT/build/public-sdk-provenance.txt" || true
+          if grep -E 'Warcraft|Blizzard|/home/runner/work/refrozen_ps5/' "$ROOT/build/eboot-strings.txt" > "$ROOT/build/forbidden-strings.txt"; then
             cat "$ROOT/build/forbidden-strings.txt" >&2
             exit 1
           fi
@@ -151,6 +156,7 @@ jobs:
             build/ps5-real-opengl-sdk/elf-metadata.txt
             build/ps5-real-opengl-sdk/undefined-symbols.txt
             build/ps5-real-opengl-sdk/SHA256SUMS
+            build/ps5-real-opengl-sdk/public-sdk-provenance.txt
             build/native-wgl-title/PPSA99006/dist/PPSA99006/**
             build/native-wgl-title/PPSA99006/build/title-sha256.txt
             build/native-wgl-title/PPSA99006/build/dist-sha256.txt
