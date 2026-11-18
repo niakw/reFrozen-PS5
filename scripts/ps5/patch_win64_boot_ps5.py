@@ -93,7 +93,7 @@ static char *find_game_dir(void) {
     replace_between_once(
         boot,
         "static char **boot_prefix; static int boot_nprefix;",
-        "#ifdef __LLVM_INSTR_PROFILE_GENERATE",
+        "#ifdef __LLVM_INSTR_PROFILE_GENERATE\n// PGO builds",
         r"""static char **boot_prefix; static int boot_nprefix;
 int rt_relaunch(int nargs, char **args) {
     (void)nargs;
