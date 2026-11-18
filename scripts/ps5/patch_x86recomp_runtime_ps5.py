@@ -74,17 +74,21 @@ def patch_win32_raw_input_hooks(rt: Path) -> None:
 extern "C" void di_key(uint32_t scan, int ext, int down) {
   const uint8_t dik = uint8_t(scan | (ext ? 0x80u : 0u));
   EmitRawInput(RawInput::Key, dik, down ? 1 : 0);
+  Ps5User32Key(scan, ext, down);
 }
 extern "C" void di_mouse_move(int dx, int dy) {
   if (dx) EmitRawInput(RawInput::MouseX, 0, dx);
   if (dy) EmitRawInput(RawInput::MouseY, 0, dy);
+  Ps5User32MouseMove(dx, dy);
 }
 extern "C" void di_mouse_wheel(int dz) {
   if (dz) EmitRawInput(RawInput::Wheel, 0, dz);
+  Ps5User32MouseWheel(dz);
 }
 extern "C" void di_mouse_button(int button, int down) {
   if (button < 0 || button > 7) return;
   EmitRawInput(RawInput::MouseButton, uint8_t(button), down ? 1 : 0);
+  Ps5User32MouseButton(button, down);
 }
 
 """
@@ -189,6 +193,177 @@ def patch_win32_audio_output(rt: Path) -> None:
     )
 
 
+
+def patch_win32_user32_pad_events(rt: Path) -> None:
+    """Feed native pad events into Win32 key state and message queues."""
+    header = rt / "hle" / "user32_window.h"
+    header_anchor = """void PumpHostEvents();
+
+"""
+    header_insert = """void PumpHostEvents();
+
+// Native PS5 input events. These complement DirectInput RawInput by updating
+// Win32 key/mouse state and posting WM_* messages to the active top-level HWND.
+// Call from the runtime's main thread.
+void Ps5User32Key(uint32_t scan, int ext, int down);
+void Ps5User32MouseMove(int dx, int dy);
+void Ps5User32MouseWheel(int dz);
+void Ps5User32MouseButton(int button, int down);
+
+"""
+    replace_exact(header, header_anchor, header_insert)
+
+    source = rt / "hle" / "user32_window.cpp"
+    source_anchor = """}  // namespace
+
+void PumpHostEvents() {
+"""
+    source_insert = r"""}  // namespace
+
+namespace {
+
+uint32_t Ps5InputHwnd() {
+  std::lock_guard<std::recursive_mutex> l(g_mu);
+  if (g_focus && Win(g_focus)) return g_focus;
+  if (g_active && Win(g_active)) return g_active;
+  for (const auto& [hwnd, w] : g_windows)
+    if (!w.destroyed && !(w.style & WS_CHILD) && w.visible) return hwnd;
+  for (const auto& [hwnd, w] : g_windows)
+    if (!w.destroyed && !(w.style & WS_CHILD)) return hwnd;
+  return 0;
+}
+
+uint8_t Ps5VkForScan(uint8_t scan, bool ext) {
+  for (unsigned vk = 1; vk < 256; ++vk) {
+    bool candidate_ext = false;
+    const uint8_t candidate =
+        ScanCodeForVk(static_cast<uint8_t>(vk), &candidate_ext);
+    if (candidate == scan && candidate_ext == ext)
+      return static_cast<uint8_t>(vk);
+  }
+  return 0;
+}
+
+}  // namespace
+
+void Ps5User32Key(uint32_t scan_value, int ext_value, int down_value) {
+  if (!OnMainThread()) {
+    WarnF("PS5 user32 key input outside main thread; ignored\n");
+    return;
+  }
+  const uint32_t hwnd = Ps5InputHwnd();
+  const uint8_t scan = static_cast<uint8_t>(scan_value & 0x7fu);
+  const bool ext = ext_value != 0;
+  const bool down = down_value != 0;
+  const uint8_t vk = Ps5VkForScan(scan, ext);
+  if (!hwnd || !vk) return;
+
+  const uint8_t gvk = GenericVk(vk);
+  const bool was_down = g_key_down[gvk] != 0;
+  SetKey(vk, down);
+  SetKey(gvk, down);
+
+  uint32_t lp = 1u | (uint32_t(scan) << 16) | (ext ? 1u << 24 : 0);
+  if (!down)
+    lp |= 0xC0000000u;
+  else if (was_down)
+    lp |= 0x40000000u;
+
+  const bool alt = g_key_down[0x12] != 0;
+  const bool sys = alt || gvk == 0x79 || gvk == 0x12;
+  if (alt) lp |= 1u << 29;
+
+  if (down) {
+    const uint32_t mods = (alt ? 1u : 0) |
+                          (g_key_down[0x11] ? 2u : 0) |
+                          (g_key_down[0x10] ? 4u : 0);
+    HotKey match{};
+    bool matched = false;
+    {
+      std::lock_guard<std::recursive_mutex> l(g_mu);
+      for (const HotKey& k : g_hotkeys) {
+        if (k.vk == gvk && (k.mods & 7) == mods) {
+          match = k;
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (matched) {
+      PostTo(match.tid,
+             Msg{match.hwnd, 0x0312 /* WM_HOTKEY */, match.id,
+                 mods | (uint32_t(gvk) << 16), TickCount(),
+                 g_mouse_x, g_mouse_y});
+      return;
+    }
+  }
+
+  const uint32_t msg =
+      down ? (sys ? WM_SYSKEYDOWN : WM_KEYDOWN)
+           : (sys ? WM_SYSKEYUP : WM_KEYUP);
+  Post(hwnd, msg, gvk, lp);
+}
+
+void Ps5User32MouseMove(int dx, int dy) {
+  if (!OnMainThread() || (!dx && !dy)) return;
+  const uint32_t hwnd = Ps5InputHwnd();
+  if (!hwnd) return;
+
+  int ox = 0, oy = 0, cw = 0, ch = 0;
+  WindowOrigin(hwnd, &ox, &oy);
+  ClientAreaSize(hwnd, &cw, &ch);
+  if (cw <= 0 || ch <= 0) return;
+
+  int x = g_mouse_x - ox;
+  int y = g_mouse_y - oy;
+  if (x < 0 || x >= cw || y < 0 || y >= ch) {
+    x = cw / 2;
+    y = ch / 2;
+  }
+  x = std::clamp(x + dx, 0, cw - 1);
+  y = std::clamp(y + dy, 0, ch - 1);
+  g_mouse_x = ox + x;
+  g_mouse_y = oy + y;
+  g_real_x.store(x);
+  g_real_y.store(y);
+  g_pointer_inside.store(true);
+  Post(hwnd, WM_MOUSEMOVE, MouseKeys(), MkLparam(x, y));
+}
+
+void Ps5User32MouseWheel(int dz) {
+  if (!OnMainThread() || !dz) return;
+  const uint32_t hwnd = Ps5InputHwnd();
+  if (!hwnd) return;
+  const int delta = std::clamp(dz, -32768, 32767);
+  Post(hwnd, WM_MOUSEWHEEL,
+       MouseKeys() | (uint32_t(uint16_t(int16_t(delta))) << 16),
+       MkLparam(g_mouse_x, g_mouse_y));
+}
+
+void Ps5User32MouseButton(int button, int down_value) {
+  if (!OnMainThread() || button < 0 || button > 2) return;
+  const uint32_t hwnd = Ps5InputHwnd();
+  if (!hwnd) return;
+
+  static constexpr uint32_t kBase[] = {
+      WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_MBUTTONDOWN};
+  static constexpr uint8_t kVk[] = {0x01, 0x02, 0x04};
+  const bool down = down_value != 0;
+  const uint8_t vk = kVk[button];
+  SetKey(vk, down);
+
+  int ox = 0, oy = 0;
+  WindowOrigin(hwnd, &ox, &oy);
+  const uint32_t msg = down ? kBase[button] : kBase[button] + 1;
+  Post(hwnd, msg, MouseKeys(),
+       MkLparam(g_mouse_x - ox, g_mouse_y - oy));
+}
+
+void PumpHostEvents() {
+"""
+    replace_exact(source, source_anchor, source_insert)
+
+
 def apply(root: Path) -> None:
     rt = root / "src" / "runtime"
     if not rt.is_dir():
@@ -197,6 +372,8 @@ def apply(root: Path) -> None:
     patch_monotonic_timing(rt)
 
     patch_win32_raw_input_hooks(rt)
+
+    patch_win32_user32_pad_events(rt)
 
     patch_win32_audio_output(rt)
 

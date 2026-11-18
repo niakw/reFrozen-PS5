@@ -42,6 +42,10 @@ class Win32RawInputHookPatchTest(unittest.TestCase):
             self.assertIn("RawInput::Wheel", text)
             self.assertIn("RawInput::MouseButton", text)
             self.assertIn("button < 0 || button > 7", text)
+            self.assertIn("Ps5User32Key(scan, ext, down);", text)
+            self.assertIn("Ps5User32MouseMove(dx, dy);", text)
+            self.assertIn("Ps5User32MouseWheel(dz);", text)
+            self.assertIn("Ps5User32MouseButton(button, down);", text)
 
     def test_fails_closed_if_upstream_emit_body_changes(self):
         with tempfile.TemporaryDirectory() as d:
