@@ -229,3 +229,18 @@ if(NOT REFROZEN_PS5_COMPILE_ONLY)
   endif()
   add_test(NAME ps5_stereo_resampler COMMAND ps5_stereo_resampler_test)
 endif()
+
+if(REFROZEN_PS5_COMPILE_ONLY)
+  add_library(ps5_win32_audio_driver_compile OBJECT
+              "../../ps5/runtime/ps5_win32_audio_driver.cpp"
+              "../../ps5/runtime/ps5_stereo_resampler.cpp")
+  target_compile_features(ps5_win32_audio_driver_compile PRIVATE cxx_std_20)
+  target_include_directories(ps5_win32_audio_driver_compile PRIVATE
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/runtime")
+  if(MSVC)
+    target_compile_options(ps5_win32_audio_driver_compile PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_win32_audio_driver_compile PRIVATE
+                           -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+endif()
