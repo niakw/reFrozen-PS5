@@ -166,9 +166,7 @@ jobs:
       - name: Map unresolved host imports back to runtime source units
         run: |
           python3 -B scripts/ps5/map_win32_runtime_imports.py \
-            build/win32-closure/object-results.tsv
-            build/win32-closure/import-map.json
-            build/win32-closure/sdl-call-sites.tsv \
+            build/win32-closure/object-results.tsv \
             build/win32-closure/objects \
             --out build/win32-closure/import-map.json
           python3 - <<'PY'
@@ -222,6 +220,8 @@ jobs:
             build/win32-closure/unresolved-symbols.txt
             build/win32-closure/defined-symbols.txt
             build/win32-closure/object-results.tsv
+            build/win32-closure/import-map.json
+            build/win32-closure/sdl-call-sites.tsv
           if-no-files-found: error
           retention-days: 3
       - name: Upload compiler census only
