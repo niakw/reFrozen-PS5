@@ -3,8 +3,11 @@ on:
   pull_request:
     paths:
       - 'scripts/ps5/synthetic_pe64.py'
+      - 'scripts/ps5/synthetic_pe64_memory.py'
       - 'tests/test_ps5_synthetic_pe64.py'
+      - 'tests/test_ps5_synthetic_pe64_memory.py'
       - 'tests/ps5/win64_lift_runtime_test.c'
+      - 'tests/ps5/win64_identity_memory_test.c'
       - '.github/workflows/ps5-win64-lifter-spike.yml'
   workflow_dispatch:
 permissions:
@@ -45,10 +48,26 @@ jobs:
         run: |
           clang -std=gnu11 -O0 -Ibuild/nightsight/runtime -Ibuild/generated tests/ps5/win64_lift_runtime_test.c build/generated/synthetic-lift.o -o build/synthetic-lift-test
           ./build/synthetic-lift-test
+      - name: Generate and translate Win64 identity-memory PE
+        run: |
+          python -m unittest discover -s tests -p 'test_ps5_synthetic_pe64_memory.py' -v
+          python scripts/ps5/synthetic_pe64_memory.py build/synthetic_win64_memory.exe
+          python -c 'import os,runpy,sys; os.cpu_count=lambda:2; sys.argv=["build/nightsight/tools/recomp64.py","build/synthetic_win64_memory.exe","build/generated-memory"]; runpy.run_path(sys.argv[0],run_name="__main__")' > build/translation-memory.log
+          cat build/translation-memory.log
+          test -s build/generated-memory/code_0000.c
+          grep -q "void F_140001000" build/generated-memory/code_0000.c
+          grep -q "UNSUPPORTED: {}" build/translation-memory.log
+      - name: Execute translated RIP-relative load/store at preferred guest VA
+        run: |
+          clang -std=gnu11 -O0 -Wno-unknown-pragmas -Ibuild/nightsight/runtime -Ibuild/generated-memory -c build/generated-memory/code_0000.c -o build/generated-memory/synthetic-memory-lift.o
+          clang -std=gnu11 -O0 -Ibuild/nightsight/runtime -Ibuild/generated-memory tests/ps5/win64_identity_memory_test.c build/generated-memory/synthetic-memory-lift.o -o build/synthetic-memory-test
+          ./build/synthetic-memory-test
       - name: Preserve synthetic-lift evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: win64-lifter-synthetic-proof
-          path: build/translation.log
+          path: |
+            build/translation.log
+            build/translation-memory.log
           if-no-files-found: ignore
