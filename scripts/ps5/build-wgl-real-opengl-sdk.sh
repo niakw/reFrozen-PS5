@@ -30,7 +30,7 @@ include $(PS5_OPENGL_PREFIX)/share/ps5-opengl/ps5-opengl.mk
 ROOT := $(REFROZEN_ROOT)
 BUILD := $(ROOT)/build/ps5-real-opengl-sdk
 CPPFLAGS += $(PS5_OPENGL_PUBLIC_CFLAGS) -I$(ROOT)/ps5/graphics
-CXXFLAGS += -std=c++20 -O1 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion -femulated-tls
+CXXFLAGS += -std=c++20 -O1 -g0 -Wall -Wextra -Werror -Wpedantic -Wconversion
 OBJECTS := $(BUILD)/probe.o $(BUILD)/wgl_platform_contract.o $(BUILD)/wgl_egl_backend_ps5.o
 
 $(BUILD)/probe.o: $(ROOT)/tests/ps5/ps5_wgl_egl_real_sdk_probe.cpp
