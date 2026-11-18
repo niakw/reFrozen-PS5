@@ -79,3 +79,45 @@ reverb. Generic system/message timing also needs only a small POSIX adaptation.
 The next portable-core targets should be synchronization and file/process
 helpers before UI, graphics and audio. Renderer/audio code should be replaced
 with the existing PS5/Encore platform paths rather than emulating macOS APIs.
+
+
+## Current PS5 portability census — 2026-11-18
+
+After the merged portable-core work plus the PS5 display/user32 adaptation in this branch, the pinned Win64 runtime compiles **17 / 23** C translation units with Payload SDK v0.42.
+
+Passing units:
+
+```text
+boot.c
+display.c
+fiber.c
+files.c
+handles.c
+input.c
+kernel32.c
+native.c
+pdh.c
+rt.c
+sockets.c
+spvfix.c
+system.c
+teb.c
+user32.c
+window.c
+xreverb.c
+```
+
+Remaining compiler blockers:
+
+| Unit | Platform dependency / disposition |
+| --- | --- |
+| `bcrypt.c` | CommonCrypto; replace only when exact Warcraft crypto imports are known or add a small platform-neutral crypto backend. |
+| `dinput.c` | CoreGraphics/AppKit mouse capture; high priority for keyboard/mouse gameplay. |
+| `steam.c` | Mach-O/dyld + Steam-for-Mac bridge; not on the first offline/LAN Warcraft path. |
+| `vulkan.c` | macOS Vulkan loader; not on the selected Warcraft `-graphicsapi OpenGL` path. |
+| `wasapi.c` | AudioToolbox/CoreAudio; replace with the PS5 audio backend. |
+| `xaudio2.c` | CoreAudio/Mach timing; replace with the PS5 audio backend if the target binary imports it. |
+
+CI evidence: runtime census run `44268238481` reports `passed=17 failed=6` and explicitly requires `display.c` and `user32.c` to PASS.
+
+This is compiler coverage, not runtime/device qualification. The display implementation exposes optional weak PS5 hooks so real scanout state can be connected after the registered WGL/EGL graphics probe is qualified.
