@@ -25,7 +25,8 @@ cmake --build "$BUILD" --target \
   guest32_ranges_compile guest64_ranges_compile exact_guest_reservation_compile \
   pe_image_materializer_compile direct_guest_backing_compile guest_image_mapping_compile \
   ps5_exact_reservation_adapter_compile ps5_direct_guest_backing_adapter_compile \
-  ps5_guest_image_mapping_adapter_compile ps5_guest_memory_probe_compile --parallel 2
+  ps5_guest_image_mapping_adapter_compile ps5_win64_memory_bridge_compile \
+  ps5_guest_memory_probe_compile --parallel 2
 for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_materializer direct_guest_backing guest_image_mapping; do
   object="$BUILD/CMakeFiles/${name}_compile.dir/${name}_test.cpp.o"
   if [[ ! -s "$object" ]]; then
@@ -39,7 +40,7 @@ for name in guest32_ranges guest64_ranges exact_guest_reservation pe_image_mater
     exit 1
   fi
 done
-for target in ps5_exact_reservation_adapter ps5_direct_guest_backing_adapter ps5_guest_image_mapping_adapter ps5_guest_memory_probe; do
+for target in ps5_exact_reservation_adapter ps5_direct_guest_backing_adapter ps5_guest_image_mapping_adapter ps5_win64_memory_bridge ps5_guest_memory_probe; do
   adapter_object="$(find "$BUILD/CMakeFiles/${target}_compile.dir" -type f -name '*.o' -print -quit)"
   if [[ -z "$adapter_object" || ! -s "$adapter_object" ]]; then
     echo "Missing PS5 adapter object: $target" >&2
@@ -52,4 +53,4 @@ for target in ps5_exact_reservation_adapter ps5_direct_guest_backing_adapter ps5
     exit 1
   fi
 done
-echo "PS5-target guest layout/reservation/backing/mapping/probe objects compiled; NOT a linked PS5 executable."
+echo "PS5-target guest layout/reservation/backing/mapping/Win64 bridge/probe objects compiled; NOT a linked PS5 executable."

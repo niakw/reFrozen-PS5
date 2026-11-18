@@ -84,6 +84,20 @@ if(REFROZEN_PS5_COMPILE_ONLY)
                            -Wall -Wextra -Werror -Wpedantic -Wconversion)
   endif()
 
+
+  add_library(ps5_win64_memory_bridge_compile OBJECT
+              "../../ps5/runtime/win64_memory_bridge_ps5.cpp")
+  target_compile_features(ps5_win64_memory_bridge_compile PRIVATE cxx_std_20)
+  target_include_directories(ps5_win64_memory_bridge_compile PRIVATE
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/host"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/../../ps5/runtime")
+  if(MSVC)
+    target_compile_options(ps5_win64_memory_bridge_compile PRIVATE /W4 /WX)
+  else()
+    target_compile_options(ps5_win64_memory_bridge_compile PRIVATE
+                           -Wall -Wextra -Werror -Wpedantic -Wconversion)
+  endif()
+
   add_library(ps5_guest_memory_probe_compile OBJECT
               "../../ps5/runtime/guest_memory_probe_ps5.cpp")
   target_compile_features(ps5_guest_memory_probe_compile PRIVATE cxx_std_20)
