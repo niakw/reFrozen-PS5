@@ -8,6 +8,7 @@ on:
       - 'scripts/ps5/bin2cpp.py'
       - 'scripts/ps5/synthetic_pe64_memory.py'
       - 'scripts/ps5/build-win64-chain-elf.sh'
+      - 'scripts/ps5/compile-win64-generated-objects.sh'
       - 'tests/ps5/ps5_win64_chain_main.cpp'
       - 'tests/test_ps5_bin2cpp.py'
       - '.github/workflows/ps5-win64-chain-elf.yml'
@@ -73,8 +74,10 @@ jobs:
           REFROZEN_GENERATED_DIR: ${{ github.workspace }}/build/generated-memory
           REFROZEN_SYNTHETIC_PE: ${{ github.workspace }}/build/synthetic_win64_memory.exe
         run: |
+          bash -n scripts/ps5/compile-win64-generated-objects.sh
           bash scripts/ps5/build-win64-chain-elf.sh
           test -s build/ps5-win64-chain/refrozen-synthetic-win64-chain.elf
+          grep -q 'REFROZEN_PS5_GENERATED_OBJECTS pass=1 code_files=1 objects=2' build/ps5-win64-chain/generated-objects/receipt.txt
 
       - name: Inspect translated-chain ELF
         run: |
