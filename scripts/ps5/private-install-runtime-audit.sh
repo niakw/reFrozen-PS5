@@ -48,6 +48,7 @@ import json, pathlib, sys
 census=json.loads(pathlib.Path(sys.argv[1]).read_text())
 gaps=json.loads(pathlib.Path(sys.argv[2]).read_text())
 gate=json.loads(pathlib.Path(sys.argv[3]).read_text())
+print("storage:", census.get("storage_layout", {}).get("classification", "unknown"))
 print("modules:", census.get("module_count", len(census.get("results", []))))
 print("gap summary:", json.dumps(gaps.get("summary", {}), sort_keys=True))
 print("first-launch gate:", "PASS" if gate.get("passed") else "BLOCKED")
