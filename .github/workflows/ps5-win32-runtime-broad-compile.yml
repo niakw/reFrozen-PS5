@@ -94,6 +94,19 @@ jobs:
           print("FAIL first errors:")
           for r in failed:
               print(f"  {r['file']}: {r['first_error']}")
+          required = {
+              "platform.cpp", "process.cpp", "stall.cpp", "dispatch.cpp",
+              "guest_memory.cpp", "guest_alloc.cpp", "pe_image.cpp",
+              "hle/opengl32.cpp", "hle/wsock32_socket.cpp",
+          }
+          actual = {r["file"] for r in passed}
+          missing = sorted(required - actual)
+          if missing or len(rows) < 63 or len(passed) < 55:
+              raise SystemExit(
+                  f"PS5 Win32 compiler baseline regression: {len(passed)}/{len(rows)} "
+                  f"missing_required={missing}"
+              )
+          print("WIN32_RUNTIME_BASELINE pass=1 min_pass=55 critical_units=9")
           PY
       - name: Upload compiler census only
         uses: actions/upload-artifact@v4
