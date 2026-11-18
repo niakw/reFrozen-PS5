@@ -73,7 +73,15 @@ jobs:
           unzip -q build/sdk-download/sdk.zip -d build/sdk-root
           test -x build/sdk-root/ps5-payload-sdk/bin/prospero-clang
 
+      - name: Restore exact installed OpenGL SDK cache
+        id: opengl-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ps5-opengl-sdk
+          key: refrozen-ps5-opengl-${{ env.ENCORE_VENDOR_SHA }}-${{ env.PS5_SDK_SHA256 }}-meson-1.10.1
+
       - name: Fetch exact PS5 OpenGL transitive sources
+        if: steps.opengl-cache.outputs.cache-hit != 'true'
         working-directory: build/opengl-source
         run: python3 tools/fetch-sources.py
 
@@ -84,7 +92,9 @@ jobs:
           PS5_OPENGL_SDK_PREFIX: ${{ github.workspace }}/build/ps5-opengl-sdk
           MAKEFLAGS: -j2
         run: |
-          make sdk-gl46
+          if [[ "${{ steps.opengl-cache.outputs.cache-hit }}" != "true" ]]; then
+            make sdk-gl46
+          fi
           test -f "$PS5_OPENGL_SDK_PREFIX/manifest.sha256"
           (cd "$PS5_OPENGL_SDK_PREFIX" && sha256sum --check --strict manifest.sha256)
           grep -q 'EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR' tests/ps5/egl_public_gl46_compat.c
