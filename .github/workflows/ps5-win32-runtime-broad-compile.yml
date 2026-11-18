@@ -191,12 +191,15 @@ jobs:
           found=forbidden.intersection(d["sdl_symbols"])
           if found:
               raise SystemExit(f"SDL timing symbols still unresolved: {sorted(found)}")
-          if d["unique_sdl_symbols"] > 59:
+          if d["unique_sdl_symbols"] != 58:
               raise SystemExit(
-                  f"SDL dependency surface regressed: {d['unique_sdl_symbols']} > 59"
+                  f"SDL dependency surface changed: {d['unique_sdl_symbols']} != 58"
               )
+          if "SDL_QuitSubSystem" in d["sdl_symbols"]:
+              raise SystemExit("SDL_QuitSubSystem returned after native mixer conversion")
           print("REFROZEN_PS5_SDL_TIMING_REMOVED pass=1 symbols=SDL_GetTicks,SDL_GetTicksNS")
-          print(f"REFROZEN_PS5_SDL_SURFACE measured_unique_sdl={d['unique_sdl_symbols']}")
+          print("REFROZEN_PS5_SDL_AUDIO_MIXER_NATIVE pass=1 removed_global=SDL_QuitSubSystem")
+          print("REFROZEN_PS5_SDL_SURFACE pass=1 unique_sdl=58")
           PY
       - name: Record patched public SDL call sites for adapter design
         run: |
