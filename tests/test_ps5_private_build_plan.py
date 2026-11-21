@@ -150,6 +150,125 @@ class PrivateBuildPlanTest(unittest.TestCase):
         selected = build_plan(c, gate(), receipt(), entry_name="Other.exe")
         self.assertEqual(selected["entry"]["file"], "Other.exe")
 
+    def test_recursive_local_module_closure(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Game.dll", "dll_normalized": "game.dll",
+            "symbols": ["GameMain"], "count": 1,
+        }]
+        c["results"] += [
+            {
+                "file": "Game.dll",
+                "relative_file": "x86_64/Game.dll",
+                "sha256": "c" * 64,
+                "machine": "x86_64",
+                "pe_bits": 64,
+                "image_base": "0x180000000",
+                "image_size": 0x500000,
+                "imports": [{
+                    "dll": "Storm.dll", "dll_normalized": "storm.dll",
+                    "symbols": ["SFileOpenArchive"], "count": 1,
+                }],
+            },
+            {
+                "file": "Storm.dll",
+                "relative_file": "x86_64/Storm.dll",
+                "sha256": "d" * 64,
+                "machine": "x86_64",
+                "pe_bits": 64,
+                "image_base": "0x190000000",
+                "image_size": 0x200000,
+                "imports": [{
+                    "dll": "kernel32.dll", "dll_normalized": "kernel32.dll",
+                    "symbols": ["CreateFileW"], "count": 1,
+                }],
+            },
+        ]
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        self.assertEqual(
+            [module["relative_file"] for module in plan["local_modules"]],
+            ["x86_64/Game.dll", "x86_64/Storm.dll"],
+        )
+        self.assertEqual(plan["local_modules"][0]["sha256"], "c" * 64)
+
+    def test_local_module_same_directory_wins(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Game.dll", "dll_normalized": "game.dll",
+            "symbols": ["GameMain"], "count": 1,
+        }]
+        base = {
+            "file": "Game.dll",
+            "sha256": "c" * 64,
+            "machine": "x86_64",
+            "pe_bits": 64,
+            "image_base": "0x180000000",
+            "image_size": 0x100000,
+            "imports": [],
+        }
+        c["results"].append({**base, "relative_file": "x86_64/Game.dll"})
+        c["results"].append({
+            **base, "relative_file": "plugins/Game.dll", "sha256": "d" * 64,
+        })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        self.assertEqual(
+            [module["relative_file"] for module in plan["local_modules"]],
+            ["x86_64/Game.dll"],
+        )
+
+    def test_ambiguous_local_module_blocks(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Plugin.dll", "dll_normalized": "plugin.dll",
+            "symbols": ["Start"], "count": 1,
+        }]
+        for directory, sha in (("plugins/a", "c"), ("plugins/b", "d")):
+            c["results"].append({
+                "file": "Plugin.dll",
+                "relative_file": f"{directory}/Plugin.dll",
+                "sha256": sha * 64,
+                "machine": "x86_64",
+                "pe_bits": 64,
+                "image_base": "0x180000000",
+                "image_size": 0x100000,
+                "imports": [],
+            })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "blocked")
+        self.assertTrue(any("ambiguous local module" in b for b in plan["blockers"]))
+
+    def test_local_module_architecture_mismatch_blocks(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "Legacy.dll", "dll_normalized": "legacy.dll",
+            "symbols": ["Start"], "count": 1,
+        }]
+        c["results"].append({
+            "file": "Legacy.dll",
+            "relative_file": "x86_64/Legacy.dll",
+            "sha256": "e" * 64,
+            "machine": "x86",
+            "pe_bits": 32,
+            "image_base": "0x10000000",
+            "image_size": 0x100000,
+            "imports": [],
+        })
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "blocked")
+        self.assertTrue(any("architecture mismatch" in b for b in plan["blockers"]))
+
+    def test_nonlocal_system_import_does_not_create_module(self):
+        c = census()
+        c["results"][0]["imports"] = [{
+            "dll": "kernel32.dll", "dll_normalized": "kernel32.dll",
+            "symbols": ["CreateFileW"], "count": 1,
+        }]
+        plan = build_plan(c, gate(), receipt())
+        self.assertEqual(plan["status"], "ready_for_private_lift_and_link")
+        self.assertEqual(plan["local_modules"], [])
+
     def test_map_summary_is_advisory(self):
         maps = [
             {

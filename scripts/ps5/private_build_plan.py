@@ -95,6 +95,111 @@ def _lifter(entry: dict | None) -> tuple[dict | None, list[str]]:
     return None, [f"unsupported executable architecture: {machine} PE{bits}"]
 
 
+def _module_identity(item: dict) -> str:
+    return str(item.get("relative_file") or item.get("file") or "").replace("\\", "/").casefold()
+
+
+def _module_parent(item: dict) -> str:
+    relative = str(item.get("relative_file") or item.get("file") or "").replace("\\", "/")
+    if "/" not in relative:
+        return ""
+    return relative.rsplit("/", 1)[0].casefold()
+
+
+def _local_module_closure(census: dict, entry: dict | None) -> tuple[list[dict], list[str]]:
+    """Resolve locally shipped PE imports using Windows-like directory preference.
+
+    This is intentionally conservative. If an imported basename exists in more
+    than one plausible local location and neither the importing module's
+    directory nor the install root makes it unique, the plan is blocked rather
+    than guessing which binary Windows would have loaded.
+    """
+    if not entry:
+        return [], ["local module closure unavailable without an entry executable"]
+
+    results = [
+        item for item in census.get("results", [])
+        if isinstance(item, dict) and "error" not in item and item.get("file")
+    ]
+    by_basename: dict[str, list[dict]] = {}
+    for item in results:
+        name = str(item.get("file") or "").casefold()
+        by_basename.setdefault(name, []).append(item)
+
+    entry_id = _module_identity(entry)
+    selected: dict[str, dict] = {entry_id: entry}
+    queue = [entry]
+    blockers: list[str] = []
+
+    def resolve(importer: dict, dll: str) -> dict | None:
+        matches = by_basename.get(dll.casefold(), [])
+        if not matches:
+            return None
+        parent = _module_parent(importer)
+        same_dir = [item for item in matches if _module_parent(item) == parent]
+        if len(same_dir) == 1:
+            return same_dir[0]
+        root = [item for item in matches if _module_parent(item) == ""]
+        if len(root) == 1:
+            return root[0]
+        if len(matches) == 1:
+            return matches[0]
+        locations = sorted(
+            str(item.get("relative_file") or item.get("file"))
+            for item in matches
+        )
+        blockers.append(
+            f"ambiguous local module {dll!r} imported by "
+            f"{importer.get('relative_file') or importer.get('file')}: "
+            + ", ".join(locations)
+        )
+        return None
+
+    while queue:
+        importer = queue.pop(0)
+        for library in importer.get("imports") or []:
+            dll = str(library.get("dll_normalized") or library.get("dll") or "").casefold()
+            if not dll:
+                continue
+            target = resolve(importer, dll)
+            if target is None:
+                continue
+            target_id = _module_identity(target)
+            if target_id in selected:
+                continue
+            if (
+                target.get("machine") != entry.get("machine")
+                or target.get("pe_bits") != entry.get("pe_bits")
+            ):
+                blockers.append(
+                    f"local module architecture mismatch: "
+                    f"{target.get('relative_file') or target.get('file')} is "
+                    f"{target.get('machine')} PE{target.get('pe_bits')}, entry is "
+                    f"{entry.get('machine')} PE{entry.get('pe_bits')}"
+                )
+                continue
+            selected[target_id] = target
+            queue.append(target)
+
+    modules = []
+    for identity, item in sorted(selected.items()):
+        if identity == entry_id:
+            continue
+        modules.append({
+            "file": item.get("file"),
+            "relative_file": item.get("relative_file"),
+            "sha256": item.get("sha256"),
+            "machine": item.get("machine"),
+            "pe_bits": item.get("pe_bits"),
+            "image_base": item.get("image_base"),
+            "image_size": item.get("image_size"),
+            "version_resource": item.get("version_resource"),
+            "import_dll_count": item.get("import_dll_count"),
+            "import_symbol_count": item.get("import_symbol_count"),
+        })
+    return modules, sorted(set(blockers))
+
+
 def _renderer(entry: dict | None) -> tuple[dict, list[str]]:
     profile = (entry or {}).get("graphics_profile") or {}
     route = profile.get("ps5_initial_route")
@@ -217,6 +322,8 @@ def build_plan(
     blockers += errors
     lifter, errors = _lifter(entry)
     blockers += errors
+    local_modules, errors = _local_module_closure(census, entry)
+    blockers += errors
     renderer, errors = _renderer(entry)
     blockers += errors
     content, errors = _content(census)
@@ -252,6 +359,7 @@ def build_plan(
             "version_resource": version,
         },
         "lifter": lifter,
+        "local_modules": local_modules,
         "renderer": renderer,
         "graphics_hardware": graphics,
         "content": content,
@@ -265,8 +373,8 @@ def build_plan(
         "blockers": unique_blockers,
         "next_actions": (
             [
-                "run the selected private lifter under repository /private",
-                "compile generated code with the PS5 runtime and pinned SDK",
+                "run the selected private lifter for the entry and every planned local module under repository /private",
+                "compile generated entry/module code with the PS5 runtime and pinned SDK",
                 "link a private Warcraft PS5 candidate",
                 "test boot/menu/solo/campaign/save/custom-map/LAN in that order",
             ]
